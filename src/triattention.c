@@ -79,6 +79,8 @@ struct tria_stats * tria_load(const char *path) {
     }
 
     fclose(fp);
+    fprintf(stderr, "tria_load: OK — %u layers, %u heads, %u kv_heads, fc=%u (v%u)\n",
+            s->num_layers, s->num_heads, s->num_kv_heads, s->freq_count, version);
     return s;
 }
 

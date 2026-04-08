@@ -219,23 +219,37 @@ int tria_get_evict_mask(
     int n_old = rt->n_scored - rt->window;
     if (n_old <= 0) return 0;
 
-    /* Start: evict everything in the scored region */
-    memset(evict_mask, 1, n_kv);
+    int n_pairs = nl * nkv;
 
-    /* Recent window + anything beyond scored: never evict */
-    for (int i = n_old; i < n_kv; i++) {
-        evict_mask[i] = 0;
+    /* Count how many layer×head pairs retain each position */
+    static int * vote = NULL;
+    static int vote_cap = 0;
+    if (n_old > vote_cap) {
+        free(vote);
+        vote = (int *)calloc(n_old, sizeof(int));
+        vote_cap = n_old;
+    } else {
+        memset(vote, 0, n_old * sizeof(int));
     }
 
-    /* Union: if ANY layer×head retains a position, keep it */
-    for (int pair = 0; pair < nl * nkv; pair++) {
+    for (int pair = 0; pair < n_pairs; pair++) {
         int cnt = rt->retained_count[pair];
         int *idx = rt->retained[pair];
         if (!idx) continue;
         for (int j = 0; j < cnt; j++) {
             if (idx[j] >= 0 && idx[j] < n_old) {
-                evict_mask[idx[j]] = 0;
+                vote[idx[j]]++;
             }
+        }
+    }
+
+    /* Evict if fewer than 50% of heads retain this position */
+    int threshold = n_pairs / 2;
+
+    memset(evict_mask, 0, n_kv);
+    for (int i = 0; i < n_old; i++) {
+        if (vote[i] < threshold) {
+            evict_mask[i] = 1;
         }
     }
 

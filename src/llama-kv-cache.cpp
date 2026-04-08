@@ -13,6 +13,10 @@
 #include <map>
 #include <stdexcept>
 
+extern "C" {
+#include "triattention-runtime.h"
+}
+
 static bool ggml_is_power_of_2(int n) {
     return (n & (n - 1)) == 0;
 }
@@ -1864,6 +1868,24 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
         set_input_kq_mask_impl<true> (args, data);
     } else {
         set_input_kq_mask_impl<false>(args, data);
+    }
+
+    /* TriAttention: apply eviction mask after standard mask fill */
+    if (g_tria_rt && g_tria_rt->n_scored > 0 && n_kv > 0) {
+        int8_t * evict = (int8_t *)calloc(n_kv, sizeof(int8_t));
+        if (evict && tria_get_evict_mask(g_tria_rt, n_kv, evict)) {
+            for (int64_t s = 0; s < n_stream; s++) {
+                for (int64_t t = 0; t < n_tps; t++) {
+                    const int64_t row = s * n_tps + t;
+                    for (int64_t k = 0; k < n_kv; k++) {
+                        if (evict[k]) {
+                            data[row * n_kv + k] = -INFINITY;
+                        }
+                    }
+                }
+            }
+        }
+        free(evict);
     }
 
     //const int64_t t_end = ggml_time_us();

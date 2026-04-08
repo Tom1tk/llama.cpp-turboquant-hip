@@ -9,6 +9,10 @@
 #include "llama-model.h"
 #include "llama-ext.h"
 
+extern "C" {
+#include "triattention-runtime.h"
+}
+
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
@@ -3439,6 +3443,11 @@ int32_t llama_decode(
     const int ret = ctx->decode(batch);
     if (ret != 0 && ret != 1) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
+    }
+
+    /* TriAttention: trigger scoring after successful decode */
+    if (ret == 0 && g_tria_rt) {
+        tria_maybe_score(g_tria_rt, (void *)ctx);
     }
 
     return ret;

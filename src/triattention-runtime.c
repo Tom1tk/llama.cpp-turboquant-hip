@@ -110,7 +110,16 @@ int tria_maybe_score(
     float * scores = (float *)malloc(n_old * sizeof(float));
     int * key_pos = (int *)malloc(n_old * sizeof(int));
 
-    if (!k_f32 || !scores || !key_pos) {
+    /* Global score accumulator: max of z-normalized scores across all heads */
+    if (rt->global_n < n_old) {
+        free(rt->global_scores);
+        rt->global_scores = (float *)malloc(n_old * sizeof(float));
+        rt->global_n = n_old;
+    }
+    for (int i = 0; i < n_old; i++) rt->global_scores[i] = -1e30f;
+    rt->global_budget = budget;
+
+    if (!k_f32 || !scores || !key_pos || !rt->global_scores) {
         free(k_f32); free(scores); free(key_pos);
         rt->n_scored = n_kv;
         return 0;
@@ -166,29 +175,23 @@ int tria_maybe_score(
             tria_score_kv_head(rt->stats, k_real, k_imag, key_pos,
                                n_kv, n_old, li, kvi, scores);
 
-            /* Store top-B retained indices */
-            int pair_idx = li * nkv + kvi;
-            free(rt->retained[pair_idx]);
-            rt->retained[pair_idx] = (int *)malloc(layer_budget * sizeof(int));
-            rt->retained_count[pair_idx] = layer_budget;
-
-            /* Simple top-K: find largest scores */
-            for (int b = 0; b < layer_budget; b++) {
-                float best = -1e30f;
-                int best_idx = 0;
-                for (int s = 0; s < n_old; s++) {
-                    if (scores[s] > best) {
-                        int dup = 0;
-                        for (int p = 0; p < b; p++) {
-                            if (rt->retained[pair_idx][p] == s) { dup = 1; break; }
-                        }
-                        if (!dup) { best = scores[s]; best_idx = s; }
-                    }
+            /* Z-normalize scores for this head, then max-aggregate into global */
+            float mean = 0, var = 0;
+            for (int s = 0; s < n_old; s++) mean += scores[s];
+            mean /= n_old;
+            for (int s = 0; s < n_old; s++) {
+                float d = scores[s] - mean;
+                var += d * d;
+            }
+            float std = sqrtf(var / n_old + 1e-8f);
+            for (int s = 0; s < n_old; s++) {
+                float z = (scores[s] - mean) / std;
+                if (z > rt->global_scores[s]) {
+                    rt->global_scores[s] = z;
                 }
-                rt->retained[pair_idx][b] = best_idx;
             }
 
-            total_pruned += n_old - layer_budget;
+            total_pruned += n_old - tria_layer_budget(rt->stats, li, budget);
             free(k_real);
             free(k_imag);
         }
@@ -213,42 +216,47 @@ int tria_get_evict_mask(
     int8_t * evict_mask
 ) {
     if (!rt || rt->n_scored == 0 || !evict_mask) return 0;
+    if (!rt->global_scores || rt->global_budget <= 0) return 0;
 
-    int nl  = rt->stats->num_layers;
-    int nkv = rt->stats->num_kv_heads;
     int n_old = rt->n_scored - rt->window;
     if (n_old <= 0) return 0;
 
-    int n_pairs = nl * nkv;
-
-    /* Count how many layer×head pairs retain each position */
-    static int * vote = NULL;
-    static int vote_cap = 0;
-    if (n_old > vote_cap) {
-        free(vote);
-        vote = (int *)calloc(n_old, sizeof(int));
-        vote_cap = n_old;
-    } else {
-        memset(vote, 0, n_old * sizeof(int));
+    int budget = rt->global_budget;
+    if (budget >= n_old) {
+        memset(evict_mask, 0, n_kv);
+        return 1;
     }
 
-    for (int pair = 0; pair < n_pairs; pair++) {
-        int cnt = rt->retained_count[pair];
-        int *idx = rt->retained[pair];
-        if (!idx) continue;
-        for (int j = 0; j < cnt; j++) {
-            if (idx[j] >= 0 && idx[j] < n_old) {
-                vote[idx[j]]++;
-            }
+    /* Find the budget-th largest score as threshold (partial sort via nth_element idea) */
+    /* Simple approach: find threshold by sorting scores */
+    static float * sorted = NULL;
+    static int sorted_cap = 0;
+    if (n_old > sorted_cap) {
+        free(sorted);
+        sorted = (float *)malloc(n_old * sizeof(float));
+        sorted_cap = n_old;
+    }
+    memcpy(sorted, rt->global_scores, n_old * sizeof(float));
+
+    /* Partial sort: find the budget-th largest value */
+    /* Use simple selection: find threshold where exactly budget items are >= it */
+    /* Quick approach: sort descending, threshold = sorted[budget-1] */
+    for (int i = 0; i < budget; i++) {
+        int max_idx = i;
+        for (int j = i + 1; j < n_old; j++) {
+            if (sorted[j] > sorted[max_idx]) max_idx = j;
         }
+        float tmp = sorted[i]; sorted[i] = sorted[max_idx]; sorted[max_idx] = tmp;
     }
+    float threshold = sorted[budget - 1];
 
-    /* Evict if fewer than 50% of heads retain this position */
-    int threshold = n_pairs / 2;
-
+    /* Build mask: evict if below threshold */
     memset(evict_mask, 0, n_kv);
-    for (int i = 0; i < n_old; i++) {
-        if (vote[i] < threshold) {
+    int kept = 0;
+    for (int i = 0; i < n_old && i < n_kv; i++) {
+        if (rt->global_scores[i] >= threshold && kept < budget) {
+            kept++;
+        } else {
             evict_mask[i] = 1;
         }
     }

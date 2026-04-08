@@ -26,6 +26,11 @@ struct tria_runtime {
     /* NULL until first scoring pass */
     int   **retained;       /* [num_layers * num_kv_heads][budget] */
     int    *retained_count; /* [num_layers * num_kv_heads] */
+
+    /* Global aggregated scores per token position (continuous) */
+    float  *global_scores;  /* [n_scored], allocated on first score */
+    int     global_n;       /* length of global_scores */
+    int     global_budget;  /* how many tokens to keep globally */
 };
 
 /*

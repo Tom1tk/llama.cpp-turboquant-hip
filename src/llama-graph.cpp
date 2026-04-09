@@ -21,6 +21,20 @@ extern "C" {
 #include <sstream>
 #include <unordered_set>
 
+// Attention sharpening: compensate softmax flattening from KV quantization noise.
+// α = 1 + 1/(2×SQNR), applied to QK scale. Only active for turbo-quantized K cache.
+// Reference: AmesianX TurboQuant v1.5.2, derived from MMSE theory.
+static float turbo_attn_sharpening(ggml_type k_type, float kq_scale) {
+    float alpha = 1.0f;
+    switch (k_type) {
+        case GGML_TYPE_TURBO2_0: alpha = 1.0f + 1.0f / (2.0f * 6.0f);  break; // ~2-bit, SQNR≈6
+        case GGML_TYPE_TURBO3_0: alpha = 1.0f + 1.0f / (2.0f * 14.0f); break; // ~3-bit, SQNR≈14
+        case GGML_TYPE_TURBO4_0: alpha = 1.0f + 1.0f / (2.0f * 26.0f); break; // ~4-bit, SQNR≈26
+        default: return kq_scale; // no sharpening for f16/q8_0/etc
+    }
+    return kq_scale * alpha;
+}
+
 // dedup helpers
 
 static ggml_tensor * build_attn_inp_kq_mask(
@@ -1898,7 +1912,9 @@ ggml_tensor * llm_graph_context::build_attn_mha(
             v = ggml_cast(ctx0, v, GGML_TYPE_F16);
         }
 
-        cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, hparams.f_max_alibi_bias,
+        cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask,
+                                  turbo_attn_sharpening(k->type, kq_scale),
+                                  hparams.f_max_alibi_bias,
                                   hparams.attn_soft_cap ? hparams.f_attn_logit_softcapping : 0.0f);
         cb(cur, LLAMA_TENSOR_NAME_FATTN, il);
 
@@ -1972,7 +1988,7 @@ ggml_tensor * llm_graph_context::build_attn_mha(
             cb(kq, "kq_plus_kq_b", il);
         }
 
-        kq = ggml_soft_max_ext(ctx0, kq, kq_mask, kq_scale, hparams.f_max_alibi_bias);
+        kq = ggml_soft_max_ext(ctx0, kq, kq_mask, turbo_attn_sharpening(k->type, kq_scale), hparams.f_max_alibi_bias);
         ggml_soft_max_add_sinks(kq, sinks);
         cb(kq, "kq_soft_max", il);
 

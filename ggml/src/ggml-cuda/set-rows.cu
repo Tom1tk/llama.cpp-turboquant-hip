@@ -248,7 +248,7 @@ static __global__ void k_set_rows_turbo3(
         const int64_t s2,
         const int64_t s3) {
 
-    static_assert(GROUP_SIZE == 128 || GROUP_SIZE == 64, "GROUP_SIZE must be 128 or 64");
+    static_assert(GROUP_SIZE == 64 || GROUP_SIZE == 128 || GROUP_SIZE == 256, "GROUP_SIZE must be 64, 128, or 256");
 
     // blockIdx.x = flat group index; threadIdx.x = element within group (0..GROUP_SIZE-1)
     const int j = threadIdx.x;
@@ -316,7 +316,9 @@ static __global__ void k_set_rows_turbo3(
     __syncthreads();
 
     // ---- Step 4: Forward WHT (signs1 → butterfly → signs2, normalized) ----
-    if (GROUP_SIZE == 128) {
+    if (GROUP_SIZE == 256) {
+        x[j] *= TURBO_WHT_SIGNS1_256[j];
+    } else if (GROUP_SIZE == 128) {
         x[j] *= TURBO_WHT_SIGNS1[j];
     } else {
         x[j] *= TURBO_WHT_SIGNS1_64[j];
@@ -334,11 +336,15 @@ static __global__ void k_set_rows_turbo3(
     WHT_STAGE_SHARED(8)
     WHT_STAGE_SHARED(16)
     WHT_STAGE_SHARED(32)
-    if (GROUP_SIZE == 128) { WHT_STAGE_SHARED(64) }
+    if (GROUP_SIZE >= 128) { WHT_STAGE_SHARED(64) }
+    if (GROUP_SIZE >= 256) { WHT_STAGE_SHARED(128) }
 #undef WHT_STAGE_SHARED
 
-    constexpr float inv_sqrt_group = (GROUP_SIZE == 128) ? 0.08838834764831845f : 0.125f;
-    if (GROUP_SIZE == 128) {
+    constexpr float inv_sqrt_group = (GROUP_SIZE == 256) ? 0.0625f :
+                                     (GROUP_SIZE == 128) ? 0.08838834764831845f : 0.125f;
+    if (GROUP_SIZE == 256) {
+        x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2_256[j];
+    } else if (GROUP_SIZE == 128) {
         x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2[j];
     } else {
         x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2_64[j];
@@ -619,7 +625,7 @@ static __global__ void k_set_rows_turbo2(
         const int64_t s2,
         const int64_t s3) {
 
-    static_assert(GROUP_SIZE == 128 || GROUP_SIZE == 64, "GROUP_SIZE must be 128 or 64");
+    static_assert(GROUP_SIZE == 64 || GROUP_SIZE == 128 || GROUP_SIZE == 256, "GROUP_SIZE must be 64, 128, or 256");
 
     const int j = threadIdx.x;
 
@@ -685,7 +691,9 @@ static __global__ void k_set_rows_turbo2(
     __syncthreads();
 
     // ---- Step 4: Forward WHT ----
-    if (GROUP_SIZE == 128) {
+    if (GROUP_SIZE == 256) {
+        x[j] *= TURBO_WHT_SIGNS1_256[j];
+    } else if (GROUP_SIZE == 128) {
         x[j] *= TURBO_WHT_SIGNS1[j];
     } else {
         x[j] *= TURBO_WHT_SIGNS1_64[j];
@@ -702,11 +710,15 @@ static __global__ void k_set_rows_turbo2(
     WHT_STAGE_SHARED_T2(8)
     WHT_STAGE_SHARED_T2(16)
     WHT_STAGE_SHARED_T2(32)
-    if (GROUP_SIZE == 128) { WHT_STAGE_SHARED_T2(64) }
+    if (GROUP_SIZE >= 128) { WHT_STAGE_SHARED_T2(64) }
+    if (GROUP_SIZE >= 256) { WHT_STAGE_SHARED_T2(128) }
 #undef WHT_STAGE_SHARED_T2
 
-    constexpr float inv_sqrt_group = (GROUP_SIZE == 128) ? 0.08838834764831845f : 0.125f;
-    if (GROUP_SIZE == 128) {
+    constexpr float inv_sqrt_group = (GROUP_SIZE == 256) ? 0.0625f :
+                                     (GROUP_SIZE == 128) ? 0.08838834764831845f : 0.125f;
+    if (GROUP_SIZE == 256) {
+        x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2_256[j];
+    } else if (GROUP_SIZE == 128) {
         x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2[j];
     } else {
         x[j] = x[j] * inv_sqrt_group * TURBO_WHT_SIGNS2_64[j];

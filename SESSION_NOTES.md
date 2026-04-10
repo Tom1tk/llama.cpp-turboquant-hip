@@ -96,18 +96,34 @@ Applied α=1.02 to turbo3 norm at FA dequant time (fattn-common.cuh).
   Suggested per-layer sensitivity analysis (quantize one global layer at a time).
 - **Perplexity:** Suggested overlapping groups and adaptive sharpening with softcap factor.
 
+## Kronecker WHT Test Result
+
+Tested H_4 ⊗ H_128 Kronecker WHT vs block-diagonal 4×128 WHT on synthetic
+512-dim vectors with cross-group correlations (2000 samples):
+
+| Method | Cosine | SNR |
+|---|---|---|
+| Block 4×128 | 0.7497 | 3.01 dB |
+| Kronecker H4⊗H128 | 0.7493 | 3.01 dB |
+
+**No improvement.** Cross-group mixing doesn't help because quantization error
+is per-group and independent. The D=512 problem is NOT about decorrelation.
+
+## Current Understanding
+
+The D=512 issue is likely a **structured score bias** in global layers, not
+insufficient WHT decorrelation. The TILE FA reading garbage acts as layer dropout
+(5 global layers effectively disabled), which is less harmful than coherent but
+biased turbo3 dequant. The 25 SWA layers carry the output.
+
+**Current best config works well (83% = f16 baseline) despite this.**
+
 ## Next Steps (Priority Order)
 
-1. **Kronecker H_4 ⊗ H_128 kernel** — requires new kernel architecture where one block
-   sees all 4 groups (currently one block = one group). Two approaches:
-   a) Separate cross-group mixing kernel before/after per-group WHT
-   b) Unified 512-thread kernel that does full Kronecker in one pass
-
-2. **Per-layer sensitivity analysis** — quantize one global layer at a time to find
-   which of the 5 layers causes most GSM8K degradation
-
-3. **G=256 debug** — still broken, separate from D=512 issue. Race condition or
-   butterfly stage bug in 256-thread kernel on HIP.
+1. **Publish results** — Reddit post, upstream discussion
+2. **G=256 debug** — still broken, separate from D=512 issue
+3. **DeepSeek MLA test** — head_dim=576, new model, new users
+4. **Upstream PR prep** — clean commits, add tests
 
 ## Repository State
 

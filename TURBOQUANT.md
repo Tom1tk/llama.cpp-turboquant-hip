@@ -163,3 +163,12 @@ Tested on: AMD Ryzen 9 9950X3D, RX 7900 XTX 24GB, ROCm 6.4, openSUSE Tumbleweed.
 | Top-1 token match | 10/10 (100%) |
 
 turbo3 produces nearly identical token distributions to f16.
+
+### Multi-Turn Tool Calling (Qwen3.5-27B, turbo3 K+V)
+
+11/11 passed (100%) across 5 scenarios including:
+- Sequential same-tool calls (weather → weather)
+- Cross-tool chains (weather → calculate, search → search → calculate)
+- 3-turn tool chains with intermediate results
+
+turbo3 KV preserves multi-step agentic reasoning.

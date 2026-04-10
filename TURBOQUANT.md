@@ -9,7 +9,7 @@
 | Model | f16 | turbo3 | Drop | Compression | N |
 |---|---|---|---|---|---|
 | **Qwen3.5-27B** Q5_K_M | 66%* | **72.0%** | +6% | 5× | 1319 |
-| **Gemma 4 26B-A4B** Q4_K_M | 83%* | **81.5%** | -1.5% | 2.9× | 100×2 |
+| **Gemma 4 26B-A4B** Q4_K_M | 83%* | **80.3%** | -3.2% | 2.9× | 100×3 |
 | **Gemma 4 31B Dense** Q4_K_M | 96%* | **97%** | +1% | 2.9× | 100 |
 
 *f16 baselines from 100-problem subset. Qwen3.5 turbo3 validated on full 1319 problems.

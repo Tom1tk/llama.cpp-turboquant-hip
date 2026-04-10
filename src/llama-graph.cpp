@@ -30,7 +30,7 @@ static float turbo_attn_sharpening(ggml_type k_type, float kq_scale) {
         case GGML_TYPE_TURBO2_0: alpha = 1.0f + 1.0f / (2.0f * 6.0f);  break; // ~2-bit, SQNR≈6
         case GGML_TYPE_TURBO3_0: alpha = 1.0f + 1.0f / (2.0f * 14.0f); break; // ~3-bit, SQNR≈14
         case GGML_TYPE_TURBO4_0: alpha = 1.0f + 1.0f / (2.0f * 26.0f); break; // ~4-bit, SQNR≈26
-        default: return kq_scale; // no sharpening for f16/q8_0/etc
+        default: return kq_scale;
     }
     return kq_scale * alpha;
 }

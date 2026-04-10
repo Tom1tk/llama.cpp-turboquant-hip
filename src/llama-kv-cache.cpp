@@ -508,6 +508,20 @@ llama_kv_cache::llama_kv_cache(
         LLAMA_LOG_INFO("%s: upstream attention rotation disabled (TurboQuant uses kernel-level WHT)\n", __func__);
     }
 
+    // Log sharpening info for turbo K types
+    {
+        float alpha = 0.0f;
+        switch (type_k) {
+            case GGML_TYPE_TURBO2_0: alpha = 1.0f + 1.0f / (2.0f * 6.0f);  break;
+            case GGML_TYPE_TURBO3_0: alpha = 1.0f + 1.0f / (2.0f * 14.0f); break;
+            case GGML_TYPE_TURBO4_0: alpha = 1.0f + 1.0f / (2.0f * 26.0f); break;
+            default: break;
+        }
+        if (alpha > 0.0f) {
+            LLAMA_LOG_INFO("%s: K-side attention sharpening: α=%.4f (%s)\n", __func__, alpha, ggml_type_name(type_k));
+        }
+    }
+
     attn_rot_k =
         !attn_rot_disable &&
         n_embd_head_k_all > 0 &&

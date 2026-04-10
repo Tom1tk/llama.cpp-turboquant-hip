@@ -10,15 +10,16 @@
 |---|---|---|---|---|
 | **Gemma 4 31B Dense** Q4_K_M | 96% | **97%** | **+1%** | 2.9× |
 | **Gemma 4 26B-A4B** Q4_K_M | 83% | **83%** | **0%** | 2.9× |
-| Qwen3.5-27B Q5_K_M | 66% | **72%** | **+6%** | 5× |
+| **Qwen3.5-27B** Q5_K_M | 66% | **72%** | **+6%** | 5× |
 
-Gemma 4 best config: `--cache-type-k turbo3 --cache-type-v turbo3 --cache-type-k-swa turbo3 --cache-type-v-swa q8_0`
+turbo3 matches or exceeds f16 accuracy on all tested models.
 
 ### WikiText-2 Perplexity
 
 | Model | f16 PPL | turbo3 PPL | Δ | Compression |
 |---|---|---|---|---|
 | Qwen3.5-27B (4K) | 6.6641 | 6.6657 | +0.02% | 5× |
+| Qwen3.5-27B (16K) | 6.0729 | 6.4521 | +6.2% | 5× |
 
 ### Comparison with AmesianX (CUDA)
 
@@ -42,7 +43,8 @@ turbo3-K + q8_0-V which maintains full accuracy.
 | TriAttention 75% | **5.9939 (-1.3%)** | ~5989 |
 | TriAttention 50% | 6.0890 (+0.26%) | ~2550 |
 
-TurboQuant + TriAttention = compression × pruning for extreme KV reduction.
+Note: TriAttention pruning activates only at longer contexts (>1K tokens).
+For short-context tasks (GSM8K ~600 tokens), pruning has no effect.
 
 ## Usage
 
@@ -51,13 +53,14 @@ TurboQuant + TriAttention = compression × pruning for extreme KV reduction.
 llama-server -m model.gguf -ngl 99 \
   --cache-type-k turbo3 --cache-type-v turbo3
 
-# Gemma 4 (recommended — 0% accuracy drop)
+# Gemma 4 (recommended — 0% accuracy drop, 2.9× compression)
 llama-server -m gemma4.gguf -ngl 99 \
   --cache-type-k turbo3 --cache-type-v turbo3 \
   --cache-type-k-swa turbo3 --cache-type-v-swa q8_0
 
-# With TriAttention KV pruning
-llama-perplexity -m model.gguf -ngl 99 \
+# With TriAttention KV pruning (long context)
+llama-server -m model.gguf -ngl 99 \
+  --cache-type-k turbo3 --cache-type-v turbo3 \
   --triattention stats.bin --tri-budget 75 --tri-window 512
 ```
 
@@ -74,8 +77,18 @@ cmake --build build -j$(nproc)
 |---|---|---|
 | Qwen3/3.5, Llama, Mistral | 128 | ✅ Full support |
 | Qwen3.5-27B (hybrid SSM+attn) | 256 | ✅ Full support |
-| Gemma 4 (ISWA, global+SWA) | 512/256 | ✅ Global turbo3, SWA turbo3-K+q8_0-V |
+| Gemma 4 (ISWA, global+SWA) | 512/256 | ✅ Works (see notes) |
 | DeepSeek (MLA) | 576/512 | Untested |
+
+### Gemma 4 notes
+
+Gemma 4 has two attention types:
+- **SWA layers** (25/30): head_dim=256, compressed with turbo3-K + q8_0-V
+- **Global layers** (5/30): head_dim=512, turbo3 encoded but FA uses MMA path
+
+The MMA flash attention path for D=512 reads turbo3 data without proper
+dequantization. Despite this, accuracy is preserved because SWA layers
+(25/30) dominate the output. Proper D=512 FA vec support is a known TODO.
 
 ## Features
 
@@ -83,6 +96,13 @@ cmake --build build -j$(nproc)
 - **TriAttention KV pruning** — frequency-based scoring + GPU compaction kernel
 - **Hybrid model support** — SSM+attention (Qwen3.5), ISWA (Gemma 4)
 - **FP32 WHT butterfly** — no precision loss (unlike FP16 implementations)
+- **GROUP_SIZE=128** — tested and working on all models
+
+## Known limitations
+
+- **GROUP_SIZE=256**: Implemented but produces garbage output on decode. Root cause unknown (norm split hypothesis ruled out). TODO.
+- **Gemma 4 global layers**: D=512 FA vec not instantiated — falls back to MMA path which reads turbo3 as raw f16. Accuracy preserved empirically.
+- **TriAttention + turbo3 combo**: No additive benefit at short contexts. At 16K, combo PPL is worse than turbo3 alone (quantization noise + pruning noise stack).
 
 ## Hardware
 

@@ -106,6 +106,20 @@ quantization noise is more harmful than the TILE fallback behavior.
 - **Hybrid model support** — SSM+attention (Qwen3.5), ISWA (Gemma 4)
 - **FP32 WHT butterfly** — no precision loss in rotation
 
+## Known issues
+
+### OOM with turbo KV on partial-offload setups (e.g. 16GB VRAM + large model)
+
+When the model doesn't fully fit in VRAM, `--fit` reduces context to fit.
+With turbo KV, the KV cache is much smaller, so `--fit` allows a larger context
+(e.g. 262K instead of 143K). But the compute buffer still scales with prompt length,
+and at large prompts (94K+) it can exceed available VRAM.
+
+**Workaround:** Set `-c` explicitly (e.g. `-c 131072`) instead of relying on the default.
+
+This is not a turbo-specific bug — turbo just exposes a `--fit` limitation by making
+the KV cache small enough that context isn't reduced.
+
 ## Known limitations
 
 - **GROUP_SIZE=256**: Implemented but decode produces garbage. Root cause unknown.

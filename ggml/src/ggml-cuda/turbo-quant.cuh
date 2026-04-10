@@ -215,10 +215,10 @@ static void turbo_innerq_init(void) {
     // Zero accumulators and set calibrating flag on device
     float zeros[INNERQ_MAX_CHANNELS] = {0};
     int zero = 0, one = 1;
-    cudaMemcpyToSymbol(d_innerq_sq_accum, zeros, sizeof(zeros));
-    cudaMemcpyToSymbol(d_innerq_count, &zero, sizeof(int));
-    cudaMemcpyToSymbol(d_innerq_active, &zero, sizeof(int));
-    cudaMemcpyToSymbol(d_innerq_calibrating, &one, sizeof(int));
+    (void)cudaMemcpyToSymbol(d_innerq_sq_accum, zeros, sizeof(zeros));
+    (void)cudaMemcpyToSymbol(d_innerq_count, &zero, sizeof(int));
+    (void)cudaMemcpyToSymbol(d_innerq_active, &zero, sizeof(int));
+    (void)cudaMemcpyToSymbol(d_innerq_calibrating, &one, sizeof(int));
 
     GGML_LOG_INFO("%s: InnerQ calibration started (target=%d tokens, strength=%.2f)\n",
                    __func__, innerq_target_tokens, innerq_strength);
@@ -276,11 +276,11 @@ static void turbo_innerq_finalize(int group_size) {
 
     // Stop calibrating, upload scales, activate
     int zero = 0, one = 1;
-    cudaMemcpyToSymbol(d_innerq_calibrating, &zero, sizeof(int));
-    cudaMemcpyToSymbol(d_innerq_scale, scale, group_size * sizeof(float));
-    cudaMemcpyToSymbol(d_innerq_scale_inv, scale_inv, group_size * sizeof(float));
+    (void)cudaMemcpyToSymbol(d_innerq_calibrating, &zero, sizeof(int));
+    (void)cudaMemcpyToSymbol(d_innerq_scale, scale, group_size * sizeof(float));
+    (void)cudaMemcpyToSymbol(d_innerq_scale_inv, scale_inv, group_size * sizeof(float));
     cudaDeviceSynchronize();  // ensure scales are visible before activating
-    cudaMemcpyToSymbol(d_innerq_active, &one, sizeof(int));
+    (void)cudaMemcpyToSymbol(d_innerq_active, &one, sizeof(int));
 
     innerq_enabled = 2;  // active
 

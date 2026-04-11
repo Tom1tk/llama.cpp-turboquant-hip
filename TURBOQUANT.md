@@ -84,17 +84,19 @@ Based on the same pre-RoPE Q/K concentration principle as [TriAttention (Mao et 
 | TriAttention 75% | **5.9939 (-1.3%)** | ~5989 |
 | TriAttention 50% | 6.0890 (+0.26%) | ~2550 |
 
-### NIAH: turbo3 + TriAttention combo (Qwen3-8B Q4_K_M)
+### Single-Needle NIAH: turbo3 + TriAttention combo
 
-| Config | NIAH pass rate | Effective KV reduction |
-|---|---|---|
-| turbo3 only (ref) | 28/28 (100%) to 64K | 5.12× |
-| turbo3 + TriAtt 75% (≤12K) | 20/20 (100%) | ~6.8× |
-| turbo3 + TriAtt 75% (≤30K) | 21/25 (84%) | ~6.8× |
-| turbo3 + TriAtt 50% (≤24K) | 16/20 (80%) | ~10.2× |
+All tests with `chat_template_kwargs: {"enable_thinking": false}` (Qwen3 thinking mode otherwise consumes answer tokens).
+TriAttention params: `--tri-budget 75 --tri-window 512 --tri-interval 128`
 
-75% retention is reliable for retrieval up to 12K context. At longer contexts,
-sporadic non-deterministic failures appear. 50% is not recommended for retrieval-critical tasks.
+| Config | Model | to 12K | to 30K |
+|---|---|---|---|
+| turbo3 only (baseline) | Qwen3.5-27B | 20/20 (100%) | 25/25 (100%) |
+| turbo3 + TriAtt 75% | Qwen3.5-27B | **20/20 (100%)** | **23/25 (92%)** |
+| turbo3 + TriAtt 75% | Qwen3-8B | 20/20 (100%) | 19/25 (76%) |
+
+75% retention preserves single-needle retrieval to 12K on both models.
+At longer contexts, sporadic failures appear (primarily at depth 0.75), with the smaller 8B model degrading faster.
 
 ## Usage
 
@@ -207,6 +209,6 @@ At 131K context, turbo3 saves 6.4 GiB vs f16. turbo2 saves 6.9 GiB.
 |---|---|---|
 | turbo3 alone | 5.12× | +0.02% PPL, NIAH 28/28 to 64K |
 | TriAttention 75% alone | 1.33× | -1.3% PPL |
-| **turbo3 + TriAttention 75%** | **~6.8×** | NIAH 20/20 to 12K (Qwen3-8B), 21/25 to 30K |
+| **turbo3 + TriAttention 75%** | **~6.8×** | Single-needle NIAH 20/20 to 12K (27B + 8B), 23/25 to 30K (27B) |
 
-Combo NIAH validated on Qwen3-8B Q4_K_M (2026-04-11). Not yet tested on Qwen3.5-27B hybrid.
+Combo validated on Qwen3.5-27B Q5_K_M (hybrid SSM+attn) and Qwen3-8B Q4_K_M (2026-04-11).

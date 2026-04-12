@@ -309,12 +309,14 @@ static void turbo_innerq_check_finalize(int group_size, int64_t ne00) {
     // Codex review P0: group_size=256 overflows 128-entry device symbols and stack arrays.
     const bool incompatible_group = (group_size != INNERQ_MAX_CHANNELS);
     if (incompatible_group) {
-        if (innerq_enabled == 1) {
+        if (innerq_enabled >= 1) {
             GGML_LOG_WARN("%s: InnerQ disabled (group_size=%d != %d, incompatible)\n",
                            __func__, group_size, INNERQ_MAX_CHANNELS);
             innerq_enabled = 0;
             int zero = 0;
             (void)cudaMemcpyToSymbol(d_innerq_calibrating, &zero, sizeof(int));
+            (void)cudaMemcpyToSymbol(d_innerq_active, &zero, sizeof(int));
+        }
         }
         return;
     }

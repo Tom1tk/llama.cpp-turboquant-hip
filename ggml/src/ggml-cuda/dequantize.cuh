@@ -91,8 +91,7 @@ static __device__ __forceinline__ void dequantize_turbo4_0(const void * vx, cons
 static __device__ __forceinline__ void dequantize_turbo3_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
     const block_turbo3_0 * x = (const block_turbo3_0 *) vx;
     const float norm = __half2float(x[ib].norm);
-    v.x = turbo3_dequant_element(&x[ib], iqs + 0, norm);
-    v.y = turbo3_dequant_element(&x[ib], iqs + 1, norm);
+    { float2 _vp = turbo3_dequant_pair(&x[ib], iqs, norm); v.x = _vp.x; v.y = _vp.y; }
 }
 
 // Turbo2: 2-bit PolarQuant (2-bit qs only, no sign), block size 32

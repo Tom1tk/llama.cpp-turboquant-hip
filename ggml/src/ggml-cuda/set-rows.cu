@@ -351,9 +351,23 @@ static __global__ void k_set_rows_turbo3(
     }
     __syncthreads();
 
-    // ---- Step 5: Quantize element j ----
-    const float rv = x[j];
-    const uint8_t idx = turbo_nearest_centroid_3bit(rv);
+    // ---- Step 5: 2D VQ quantize pairs ----
+    const float my_val = x[j];
+    const float pair_val = __shfl_xor_sync(0xffffffff, my_val, 1);
+    const float vx = (j & 1) ? pair_val : my_val;
+    const float vy = (j & 1) ? my_val   : pair_val;
+    uint8_t best_vq = 0;
+    if ((j & 1) == 0) {
+        float best_dist = 1e30f;
+        for (int c = 0; c < 64; c++) {
+            float dx = vx - TURBO_VQ2D_X[c];
+            float dy = vy - TURBO_VQ2D_Y[c];
+            float d = dx*dx + dy*dy;
+            if (d < best_dist) { best_dist = d; best_vq = (uint8_t)c; }
+        }
+    }
+    best_vq = __shfl_sync(0xffffffff, best_vq, (j % WARP_SIZE) & ~1);
+    const uint8_t idx = (j & 1) ? (best_vq & 0x7) : ((best_vq >> 3) & 0x7);
 
     // ---- Step 6: Pack qs and signs (warp-cooperative, no atomics) ----
     // Each warp handles 32 elements. With QK_TURBO3 > WARP_SIZE, multiple warps
@@ -384,7 +398,7 @@ static __global__ void k_set_rows_turbo3(
     if (lane % 8 == 0) blk->signs[global_signs_byte] = signs_byte;
 
     // ---- Step 7: Reconstruction norm (parallel, same pattern as step 2) ----
-    const float c = TURBO_CENTROIDS_3BIT[idx];
+    const float c = (j & 1) ? TURBO_VQ2D_Y[best_vq] : TURBO_VQ2D_X[best_vq];
     float rc = c * c;
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
         rc += __shfl_xor_sync(0xffffffff, rc, offset);

@@ -334,8 +334,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo3_0(
             const uint8_t idx1   = ((qs_byte >> (shift+2)) & 0x3) | (((sgn_byte >> (j0 % 8 + 1)) & 0x1) << 2);
 
             float2 kv;
-            kv.x = TURBO_CENTROIDS_3BIT[idx0] * norm;
-            kv.y = TURBO_CENTROIDS_3BIT[idx1] * norm;
+            { uint8_t vq_ = (idx0 << 3) | idx1; kv.x = TURBO_VQ2D_X[vq_] * norm; kv.y = TURBO_VQ2D_Y[vq_] * norm; }
 
 #ifdef V_DOT2_F32_F16_AVAILABLE
             const half2 qv = ((const half2 *) Q_v)[k_KQ_0/nthreads + k_KQ_1];
@@ -767,34 +766,32 @@ static __device__ __forceinline__ void dequantize_V_turbo3_0(const void * __rest
 #ifdef FP16_AVAILABLE
         if constexpr (std::is_same_v<T, half>) {
             ((half2 *) dst)[0] = make_half2(
-                __float2half(TURBO_CENTROIDS_3BIT[idx0] * norm),
-                __float2half(TURBO_CENTROIDS_3BIT[idx1] * norm));
+                __float2half(TURBO_VQ2D_X[(idx0<<3)|idx1] * norm),
+                __float2half(TURBO_VQ2D_Y[(idx0<<3)|idx1] * norm));
             ((half2 *) dst)[1] = make_half2(
-                __float2half(TURBO_CENTROIDS_3BIT[idx2] * norm),
-                __float2half(TURBO_CENTROIDS_3BIT[idx3] * norm));
+                __float2half(TURBO_VQ2D_X[(idx2<<3)|idx3] * norm),
+                __float2half(TURBO_VQ2D_Y[(idx2<<3)|idx3] * norm));
         } else
 #endif // FP16_AVAILABLE
         if constexpr (std::is_same_v<T, float>) {
             ((float2 *) dst)[0] = make_float2(
-                TURBO_CENTROIDS_3BIT[idx0] * norm,
-                TURBO_CENTROIDS_3BIT[idx1] * norm);
+                TURBO_VQ2D_X[(idx0<<3)|idx1] * norm,
+                TURBO_VQ2D_Y[(idx0<<3)|idx1] * norm);
             ((float2 *) dst)[1] = make_float2(
-                TURBO_CENTROIDS_3BIT[idx2] * norm,
-                TURBO_CENTROIDS_3BIT[idx3] * norm);
+                TURBO_VQ2D_X[(idx2<<3)|idx3] * norm,
+                TURBO_VQ2D_Y[(idx2<<3)|idx3] * norm);
         } else {
             static_assert(std::is_same_v<T, void>, "unsupported type");
         }
     } else { // ne == 2
 #ifdef FP16_AVAILABLE
         if constexpr (std::is_same_v<T, half>) {
-            float v0 = turbo3_dequant_element(&x[ib], j0,   norm);
-            float v1 = turbo3_dequant_element(&x[ib], j0+1, norm);
+            float2 _vp = turbo3_dequant_pair(&x[ib], j0, norm); float v0 = _vp.x; float v1 = _vp.y;
             ((half2 *) dst)[0] = make_half2(__float2half(v0), __float2half(v1));
         } else
 #endif // FP16_AVAILABLE
         if constexpr (std::is_same_v<T, float>) {
-            ((float *) dst)[0] = turbo3_dequant_element(&x[ib], j0,   norm);
-            ((float *) dst)[1] = turbo3_dequant_element(&x[ib], j0+1, norm);
+            { float2 _vp = turbo3_dequant_pair(&x[ib], j0, norm); ((float *) dst)[0] = _vp.x; ((float *) dst)[1] = _vp.y; }
         } else {
             static_assert(std::is_same_v<T, void>, "unsupported type");
         }

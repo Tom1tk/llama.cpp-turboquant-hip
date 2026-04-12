@@ -269,29 +269,15 @@ void ggml_cuda_mul_mat_vec_tq(ggml_backend_cuda_context & ctx,
             mul_mat_vec_tq3_1s_v12<<<grid, block, shmem_needed, stream>>>(src0_d, src1_d, dst_d, ncols_x, nrows_x);
         }
     } else {
-        // V8 fallback: two-phase with global scratch buffer
-        static float * d_act_buf = nullptr;
-        static size_t  d_act_buf_size = 0;
-
-        cudaStreamCaptureStatus capture_status;
-        cudaStreamIsCapturing(stream, &capture_status);
-
-        if (capture_status != cudaStreamCaptureStatusNone) {
-            GGML_ASSERT(d_act_buf != nullptr && d_act_buf_size >= shmem_needed &&
-                         "TQ scratch buffer not pre-allocated before graph capture");
-        } else {
-            if (shmem_needed > d_act_buf_size) {
-                if (d_act_buf) cudaFree(d_act_buf);
-                cudaMalloc(&d_act_buf, shmem_needed);
-                d_act_buf_size = shmem_needed;
-            }
-        }
+        // V8 fallback: two-phase with pool-allocated scratch (Codex P1: was global static)
+        ggml_cuda_pool & pool = ctx.pool();
+        ggml_cuda_pool_alloc<float> d_act_alloc(pool, (size_t)ncols_x);
 
         {
             const int n_blocks = ncols_x / 32;
             const dim3 rot_block(32, 4);
             const dim3 rot_grid((n_blocks + 3) / 4);
-            tq_prerotate_activation_v8<<<rot_grid, rot_block, 0, stream>>>(src1_d, d_act_buf, ncols_x);
+            tq_prerotate_activation_v8<<<rot_grid, rot_block, 0, stream>>>(src1_d, d_act_alloc.get(), ncols_x);
         }
 
         {
@@ -299,9 +285,9 @@ void ggml_cuda_mul_mat_vec_tq(ggml_backend_cuda_context & ctx,
             const dim3 grid((nrows_x + MMVQ_TQ_NWARPS - 1) / MMVQ_TQ_NWARPS);
 
             if (src0->type == GGML_TYPE_TQ4_1S) {
-                mul_mat_vec_tq4_1s_v8<<<grid, block, 0, stream>>>(src0_d, d_act_buf, dst_d, ncols_x, nrows_x);
+                mul_mat_vec_tq4_1s_v8<<<grid, block, 0, stream>>>(src0_d, d_act_alloc.get(), dst_d, ncols_x, nrows_x);
             } else {
-                mul_mat_vec_tq3_1s_v8<<<grid, block, 0, stream>>>(src0_d, d_act_buf, dst_d, ncols_x, nrows_x);
+                mul_mat_vec_tq3_1s_v8<<<grid, block, 0, stream>>>(src0_d, d_act_alloc.get(), dst_d, ncols_x, nrows_x);
             }
         }
     }

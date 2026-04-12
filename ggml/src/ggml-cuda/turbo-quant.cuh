@@ -317,7 +317,6 @@ static void turbo_innerq_check_finalize(int group_size, int64_t ne00) {
             (void)cudaMemcpyToSymbol(d_innerq_calibrating, &zero, sizeof(int));
             (void)cudaMemcpyToSymbol(d_innerq_active, &zero, sizeof(int));
         }
-        }
         return;
     }
 

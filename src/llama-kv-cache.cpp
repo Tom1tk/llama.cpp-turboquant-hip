@@ -262,6 +262,8 @@ llama_kv_cache::llama_kv_cache(
         //   5 = Boundary V: first2+last2 V=turbo4, rest V=turbo2 (K unchanged)
         //   6 = V-only: last 8 V=turbo4, rest V=turbo2 (K unchanged)
         //   7 = Boundary V (recommended): first2+last2 V=q8_0, rest V=turbo2 (K unchanged)
+        //   9 = K-upgrade: all K=turbo4, V unchanged (for long context with turbo3 K+V)
+        //  10 = Boundary K: first2+last2 K=turbo4, rest K=turbo3 (V unchanged)
         ggml_type layer_type_k = type_k;
         ggml_type layer_type_v = type_v;
         {
@@ -328,6 +330,19 @@ llama_kv_cache::llama_kv_cache(
                 if (kv_layer_idx == 0) {
                     LLAMA_LOG_INFO("llama_kv_cache: Boundary V mode 8: first2+last2 KV layers V=%s, rest V=%s (%u KV layers)\n",
                         ggml_type_name(boundary_type), ggml_type_name(type_v), n_kv_layers);
+                }
+            } else if (adaptive_mode == 9 && is_turbo) {
+                layer_type_k = GGML_TYPE_TURBO4_0;
+                if (kv_layer_idx == 0) {
+                    LLAMA_LOG_INFO("llama_kv_cache: K-upgrade mode 9: all K=turbo4, V=%s (%u KV layers)\n",
+                        ggml_type_name(type_v), n_kv_layers);
+                }
+            } else if (adaptive_mode == 10 && is_turbo && n_kv_layers >= 8) {
+                const bool is_boundary = (kv_layer_idx < 2 || kv_layer_idx >= n_kv_layers - 2);
+                if (is_boundary) layer_type_k = GGML_TYPE_TURBO4_0;
+                if (kv_layer_idx == 0) {
+                    LLAMA_LOG_INFO("llama_kv_cache: Boundary K mode 10: first2+last2 K=turbo4, rest K=%s (%u KV layers)\n",
+                        ggml_type_name(type_k), n_kv_layers);
                 }
             }
         }

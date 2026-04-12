@@ -96,16 +96,6 @@ Models with `partial_rotary_factor < 1.0` (Qwen3.5 family) showed no regression 
 
 Minimal speed overhead: 1-2% on standard models, 8% decode on Gemma 4 (D=512 WHT cost).
 
-### Comparison with AmesianX (CUDA)
-
-| | domvox (HIP) | AmesianX (CUDA) |
-|---|---|---|
-| **Gemma 4 accuracy drop** | **-1.5%** | **-19%** |
-| Platform | AMD ROCm | NVIDIA CUDA |
-| Compression (Gemma 4) | 2.9× | 5.2× |
-| Speed overhead | 1-8% | N/A |
-| TriAttention pruning | Yes | No |
-
 ### TriAttention KV Pruning (Qwen3.5-27B, 16K context)
 
 Based on the same pre-RoPE Q/K concentration principle as [TriAttention (Mao et al., NVIDIA/MIT, 2026)](https://arxiv.org/abs/2604.04921). Independent C/HIP implementation with native GPU compaction kernel.

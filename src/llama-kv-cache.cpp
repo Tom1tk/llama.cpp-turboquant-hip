@@ -263,7 +263,7 @@ llama_kv_cache::llama_kv_cache(
         //   6 = V-only: last 8 V=turbo4, rest V=turbo2 (K unchanged)
         //   7 = Boundary V (recommended): first2+last2 V=q8_0, rest V=turbo2 (K unchanged)
         //   9 = K-upgrade: all K=turbo4, V unchanged (for long context with turbo3 K+V)
-        //  10 = Boundary K: first2+last2 K=turbo4, rest K=turbo3 (V unchanged)
+        //  10 = Boundary K: first2+last2 K=turbo4, rest K unchanged (V unchanged)
         ggml_type layer_type_k = type_k;
         ggml_type layer_type_v = type_v;
         {

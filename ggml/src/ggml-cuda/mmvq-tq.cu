@@ -44,7 +44,7 @@ static __global__ void tq_prerotate_activation_v8(
 
     #pragma unroll
     for (int h = 1; h < 32; h <<= 1) {
-        float o = __shfl_xor_sync(0xffffffff, val, h);
+        float o = __shfl_xor_sync(0xffffffff, val, h, WARP_SIZE);
         val = (lane & h) ? (o - val) : (val + o);
     }
     val *= 0.17677669529663688f;
@@ -77,7 +77,7 @@ static __global__ void mul_mat_vec_tq4_1s_v8(
 
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1)
-        sum += __shfl_xor_sync(0xffffffff, sum, offset);
+        sum += __shfl_xor_sync(0xffffffff, sum, offset, WARP_SIZE);
 
     if (lane == 0) dst[row] = sum;
 }
@@ -116,7 +116,7 @@ static __global__ void mul_mat_vec_tq3_1s_v8(
 
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1)
-        sum += __shfl_xor_sync(0xffffffff, sum, offset);
+        sum += __shfl_xor_sync(0xffffffff, sum, offset, WARP_SIZE);
 
     if (lane == 0) dst[row] = sum;
 }
@@ -155,7 +155,7 @@ static __global__ void mul_mat_vec_tq4_1s_v12(
 
         #pragma unroll
         for (int h = 1; h < 32; h <<= 1) {
-            float o = __shfl_xor_sync(0xffffffff, val, h);
+            float o = __shfl_xor_sync(0xffffffff, val, h, WARP_SIZE);
             val = (lane & h) ? (o - val) : (val + o);
         }
         val *= 0.17677669529663688f;  // 1/sqrt(32)
@@ -179,7 +179,7 @@ static __global__ void mul_mat_vec_tq4_1s_v12(
 
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1)
-        sum += __shfl_xor_sync(0xffffffff, sum, offset);
+        sum += __shfl_xor_sync(0xffffffff, sum, offset, WARP_SIZE);
 
     if (lane == 0) dst[row] = sum;
 }
@@ -204,7 +204,7 @@ static __global__ void mul_mat_vec_tq3_1s_v12(
 
         #pragma unroll
         for (int h = 1; h < 32; h <<= 1) {
-            float o = __shfl_xor_sync(0xffffffff, val, h);
+            float o = __shfl_xor_sync(0xffffffff, val, h, WARP_SIZE);
             val = (lane & h) ? (o - val) : (val + o);
         }
         val *= 0.17677669529663688f;
@@ -228,7 +228,7 @@ static __global__ void mul_mat_vec_tq3_1s_v12(
 
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1)
-        sum += __shfl_xor_sync(0xffffffff, sum, offset);
+        sum += __shfl_xor_sync(0xffffffff, sum, offset, WARP_SIZE);
 
     if (lane == 0) dst[row] = sum;
 }
@@ -334,7 +334,7 @@ static __global__ void k_convert_tq4_1s_to_q8_0(
     // Step 2: Inverse WHT via warp shuffle (same as dequant path)
     #pragma unroll
     for (int h = 1; h < 32; h <<= 1) {
-        float o = __shfl_xor_sync(0xffffffff, val, h);
+        float o = __shfl_xor_sync(0xffffffff, val, h, WARP_SIZE);
         val = (lane & h) ? (o - val) : (val + o);
     }
     val *= 0.17677669529663688f;  // 1/sqrt(32)
@@ -344,7 +344,7 @@ static __global__ void k_convert_tq4_1s_to_q8_0(
     float amax = fabsf(val);
     #pragma unroll
     for (int off = 16; off > 0; off >>= 1)
-        amax = fmaxf(amax, __shfl_xor_sync(0xffffffff, amax, off));
+        amax = fmaxf(amax, __shfl_xor_sync(0xffffffff, amax, off, WARP_SIZE));
 
     const float d = amax / 127.0f;
     const float id = (d > 0.0f) ? 127.0f / amax : 0.0f;

@@ -50,9 +50,34 @@ Tested: get_weather, send_email, search_web, calculate, create_reminder.
 | | q4_0 | 6.5238 | +3.96% | 3.56× |
 | | turbo3 | 6.2187 | -0.9% | 5.12× |
 
+### InnerQ + 2D Vector Quantization (turbo3 quality breakthrough)
+
+Two techniques that dramatically improve turbo3 K cache quality at long context:
+
+**RoPE Pair Normalization (RPN):** InnerQ equalization merges adjacent channel pairs to a shared RMS before WHT, preventing independent per-channel scales from deforming RoPE rotation geometry. Applied to K cache only (V is not RoPE'd). Controlled by `TURBO_INNERQ_STRENGTH` env var (default: 0.15).
+
+**2D Vector Quantization:** Replaces per-element scalar quantization (8 Lloyd-Max centroids) with per-pair 2D VQ using a 64-entry K-means codebook trained on 74K actual WHT output pairs. Same 3 bits/element, same block format. 12.6% MSE reduction from sphere-packing gain.
+
+**Qwen3-8B Q4_K_M, ctx=16K, wikitext-2, 5 chunks — turbo3 K+V progression:**
+
+| Change | PPL | vs f16 (6.92) |
+|---|---|---|
+| turbo3 baseline (no InnerQ) | 19.70 | +185% ⚠️ |
+| + RPN pair normalization | 8.18 | +18% |
+| + strength=0.25 | 7.33 | +5.9% |
+| + 2D VQ (64-entry codebook) | 7.21 | +4.2% |
+| + strength=0.15 | 7.17 | +3.6% |
+| + actual-data codebook (20K pairs) | 7.14 | +3.2% |
+| + improved K-means (74K, 20 inits) | **7.05** | **+1.9%** |
+| turbo4 K+V (reference) | 6.99 | +0.9% |
+
+InnerQ calibration uses 512 tokens (override via `TURBO_INNERQ` env var).
+
 ### Long Context: K Cache Sensitivity and Mixed Precision
 
-turbo3 K cache can degrade at long context on models with full RoPE. V cache is robust. The cause is post-RoPE K quantization — RoPE applies position-dependent rotations that create heavier tails in the K distribution, which 8 centroids (turbo3) struggle to represent at high positions.
+turbo3 K cache can degrade at long context on models with full RoPE. V cache is robust. The cause is post-RoPE K quantization — RoPE applies position-dependent rotations that create heavier tails in the K distribution.
+
+With InnerQ + 2D VQ enabled (default), turbo3 K+V is now viable at 16K context:
 
 **Qwen3-8B Q4_K_M, ctx=16K, wikitext-2, 5 chunks:**
 
@@ -60,14 +85,14 @@ turbo3 K cache can degrade at long context on models with full RoPE. V cache is 
 |---|---|---|
 | f16 KV | 6.92 | — |
 | turbo4 K+V | 6.99 | +0.9% |
+| turbo3 K+V (with InnerQ + 2D VQ) | **7.05** | **+1.9%** |
 | turbo4 K + turbo3 V | 7.01 | +1.3% |
 | q8_0 K + turbo3 V | 6.95 | +0.4% |
-| turbo3 K + q8_0 V | 21.16 | +206% ⚠️ |
-| turbo3 K+V | 19.70 | +185% ⚠️ |
+| turbo3 K+V (no InnerQ) | 19.70 | +185% ⚠️ |
 
-**Llama-3.1-8B base Q4_K_M, ctx=16K:** turbo3 K+V = 5.33 vs f16 4.91 (+8.4%). Moderate, not catastrophic.
+**Llama-3.1-8B base Q4_K_M, ctx=16K:** turbo3 K+V = 5.30 vs f16 4.91 (+7.8%).
 
-**Qwen3.5-27B Q5_K_M, ctx=16K:** turbo3 K+V = 6.11 vs f16 6.12 (no regression — partial_rotary_factor=0.25 means only 25% of K dims have RoPE).
+**Qwen3.5-27B Q5_K_M, ctx=16K:** turbo3 K+V = 6.11 vs f16 6.12 (no regression — partial_rotary_factor=0.25 means only 25% of K dims have RoPE, InnerQ disabled).
 
 Severity depends on: RoPE coverage, rope_theta, model architecture. Consistent with KVQuant (Berkeley) and Q-ROAR findings on post-RoPE K quantization sensitivity.
 
@@ -75,11 +100,10 @@ Severity depends on: RoPE coverage, rope_theta, model architecture. Consistent w
 
 | Context | Config |
 |---|---|
-| ≤ 8K | `--cache-type-k turbo3 --cache-type-v turbo3` |
-| 8K–32K | `--cache-type-k turbo4 --cache-type-v turbo3` |
-| 32K+ | `--cache-type-k turbo4 --cache-type-v turbo4` or benchmark your model |
+| Any | `--cache-type-k turbo3 --cache-type-v turbo3` (InnerQ + 2D VQ enabled by default) |
+| Conservative | `--cache-type-k turbo4 --cache-type-v turbo3` |
 
-Models with `partial_rotary_factor < 1.0` (Qwen3.5 family) showed no regression at 16K with turbo3 K+V.
+Models with `partial_rotary_factor < 1.0` (Qwen3.5 family) showed no regression at 16K with turbo3 K+V even without InnerQ.
 
 ### Speed (RX 7900 XTX, ROCm 6.4)
 
@@ -167,6 +191,7 @@ quantization noise is more harmful than the TILE fallback behavior.
 
 ## Features
 
+- **InnerQ + 2D VQ** — RoPE Pair Normalization + 64-entry 2D vector quantization codebook. Reduces turbo3 K degradation from +185% to +1.9% PPL at 16K context
 - **Attention sharpening** — K-side α = 1 + 1/(2×SQNR) compensates softmax flattening
 - **TriAttention KV pruning** — frequency-based scoring + GPU compaction kernel
 - **Hybrid model support** — SSM+attention (Qwen3.5), ISWA (Gemma 4)
@@ -194,7 +219,7 @@ the KV cache small enough that context isn't reduced.
 
 ## Hardware
 
-Tested on: AMD Ryzen 9 9950X3D, RX 7900 XTX 24GB, ROCm 6.4, openSUSE Tumbleweed.
+Tested on: AMD Ryzen 9 9950X3D, RX 7900 XTX 24GB, ROCm 6.4/7.2.1, openSUSE Tumbleweed.
 
 ### KL-Divergence (Qwen3.5-27B, turbo vs f16, 10 prompts)
 

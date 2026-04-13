@@ -256,8 +256,9 @@ At 131K context, turbo3 saves 6.4 GiB vs f16. turbo2 saves 6.9 GiB.
 
 | Method | KV Compression | Quality |
 |---|---|---|
-| turbo3 alone | 5.12× | +0.02% PPL, NIAH 28/28 to 64K |
+| turbo3 alone | 5.12× | Qwen3.5-27B: PPL 6.00 (better than f16 6.12) |
 | TriAttention 75% alone | 1.33× | -1.3% PPL |
-| **turbo3 + TriAttention 75%** | **~6.8×** | GSM8K 72.0% (=f16), NIAH 20/20 to 12K, 23/25 to 30K (27B) |
+| **turbo3 + TriAttention 75%** | **~6.8×** | Qwen3.5-27B: PPL 6.19 (+1.1% vs f16), GSM8K 72.0% (=f16) |
+| **turbo3 + TriAttention 50%** | **~10.2×** | Qwen3.5-27B: PPL 6.23 (+1.8% vs f16) |
 
 Combo validated on Qwen3.5-27B Q5_K_M (hybrid SSM+attn) and Qwen3-8B Q4_K_M. GSM8K validated on full 1319 problems (2026-04-11).

@@ -3,7 +3,9 @@
 #include "common.cuh"
 #include "convert.cuh"
 #include "vecdotq.cuh"
+#ifdef GGML_FATTN_TURBO
 #include "turbo-quant.cuh"
+#endif
 
 #include <cstdint>
 
@@ -290,6 +292,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
     return sum;
 }
 
+#ifdef GGML_FATTN_TURBO
 // Turbo3 KQ dot product: dequantize K from turbo3 blocks, dot with Q (float2/half2)
 // Uses float Q path (like f16), not q8_1 integer path.
 // Q_v is half2[] or float2[] with D/2 pairs, partitioned nthreads-strided.
@@ -446,6 +449,8 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo4_0(
 
     return sum;
 }
+
+#endif // GGML_FATTN_TURBO — turbo KQ dot products
 
 template <typename Tds, int ni>
 static __device__ __forceinline__ void quantize_q8_1_to_shared(
@@ -736,6 +741,7 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
     }
 }
 
+#ifdef GGML_FATTN_TURBO
 // Turbo3 V dequantize: extract `ne` float/half values at position i0.
 //
 // Optimised for the ne==4 path (used by the VEC kernel with turbo3 V):
@@ -914,6 +920,8 @@ static __device__ __forceinline__ void dequantize_V_turbo4_0(const void * __rest
     }
 }
 
+#endif // GGML_FATTN_TURBO — turbo V dequant
+
 template <ggml_type type_K, int D, int nthreads>
 constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ() {
     if constexpr (type_K == GGML_TYPE_F16) {
@@ -930,12 +938,14 @@ constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ() {
         return vec_dot_fattn_vec_KQ_q8_0<D, nthreads>;
     } else if constexpr (type_K == GGML_TYPE_BF16) {
         return vec_dot_fattn_vec_KQ_bf16<D, nthreads>;
+#ifdef GGML_FATTN_TURBO
     } else if constexpr (type_K == GGML_TYPE_TURBO3_0) {
         return vec_dot_fattn_vec_KQ_turbo3_0<D, nthreads>;
     } else if constexpr (type_K == GGML_TYPE_TURBO2_0) {
         return vec_dot_fattn_vec_KQ_turbo2_0<D, nthreads>;
     } else if constexpr (type_K == GGML_TYPE_TURBO4_0) {
         return vec_dot_fattn_vec_KQ_turbo4_0<D, nthreads>;
+#endif
     } else {
         static_assert(type_K == -1, "bad type");
         return nullptr;
@@ -958,12 +968,14 @@ constexpr __device__ dequantize_V_t get_dequantize_V() {
         return dequantize_V_q8_0<T, ne>;
     } else if constexpr (type_V == GGML_TYPE_BF16) {
         return dequantize_V_bf16<float, ne>;
+#ifdef GGML_FATTN_TURBO
     } else if constexpr (type_V == GGML_TYPE_TURBO3_0) {
         return dequantize_V_turbo3_0<T, ne>;
     } else if constexpr (type_V == GGML_TYPE_TURBO2_0) {
         return dequantize_V_turbo2_0<T, ne>;
     } else if constexpr (type_V == GGML_TYPE_TURBO4_0) {
         return dequantize_V_turbo4_0<T, ne>;
+#endif
     } else {
         static_assert(type_V == -1, "bad type");
         return nullptr;

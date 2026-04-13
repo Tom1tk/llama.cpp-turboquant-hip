@@ -1,3 +1,4 @@
+#define GGML_FATTN_TURBO
 // Mixed KV: q8_0 K + turbo4 V
 
 #include "../fattn-vec.cuh"

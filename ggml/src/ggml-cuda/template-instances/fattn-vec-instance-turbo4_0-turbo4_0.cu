@@ -1,3 +1,4 @@
+#define GGML_FATTN_TURBO
 // TurboQuant4 CUDA flash attention vec kernel instantiation
 
 #include "../fattn-vec.cuh"

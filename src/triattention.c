@@ -198,6 +198,8 @@ static void tria_cs_free(struct tria_cs_table *t) {
     free(t->cos_tab); free(t->sin_tab); free(t->ka); free(t);
 }
 
+static float tria_max_beta = -1.0f;
+
 static void score_keys_single_head(
     const struct tria_head_stats *hs,
     const struct tria_cs_table *cs,
@@ -209,6 +211,11 @@ static void score_keys_single_head(
 ) {
     /* Heap-allocate rel buffers instead of VLA to avoid stack overflow
        from file-controlled fc (Codex review: stack overflow risk) */
+    if (tria_max_beta < 0.0f) {
+        const char *env = getenv("TRIA_MAX_BETA");
+        tria_max_beta = env ? strtof(env, NULL) : 0.0f;
+        fprintf(stderr, "tria: max_beta=%.2f\n", tria_max_beta);
+    }
     float *rel_r = malloc(fc * sizeof(float));
     float *rel_i = malloc(fc * sizeof(float));
     if (!rel_r || !rel_i) {
@@ -243,7 +250,7 @@ static void score_keys_single_head(
         }
         /* DefensiveKV-lite: blend mean with max for worst-case robustness */
         float trig_mean = trig_sum / (float)TRIA_N_OFFSETS;
-        out[s] = trig_mean + 0.3f * (trig_max - trig_mean) + extra;
+        out[s] = trig_mean + tria_max_beta * (trig_max - trig_mean) + extra;
     }
     free(rel_r);
     free(rel_i);

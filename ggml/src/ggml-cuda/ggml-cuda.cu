@@ -4892,8 +4892,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             } break;
         case GGML_OP_SET_ROWS:
             {
-                // turbo types require head_dim divisible by appropriate group size
-                if ((op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO2_0) && op->src[0]->ne[0] % 64 != 0) {
+                // turbo3/2 block size is 128 (QK_TURBO3), head_dim must be divisible by 128
+                if ((op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO2_0) && op->src[0]->ne[0] % 128 != 0) {
                     return false;
                 }
                 // turbo4 block size is 128, so head_dim must be divisible by 128

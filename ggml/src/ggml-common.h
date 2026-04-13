@@ -285,6 +285,7 @@ static_assert(sizeof(block_tq2_0) == sizeof(ggml_half) + QK_K / 4, "wrong tq2_0 
 // The 3-bit index is split: lower 2 bits in qs[], upper 1 bit in signs[]
 #define QK_TURBO3 128   // Block size 128: one block per rotation group, eliminates redundant norms
 #define QK_TURBO3_GROUP 128  // rotation group size = head_dim
+static_assert(QK_TURBO3 % 2 == 0, "QK_TURBO3 must be even for 2D VQ pair quantization");
 // Derived: FA template nl parameters (auto-scale with block size)
 #define NL_TURBO3     (QK_TURBO3 / 16)   // non-vec FA iterations per block
 #define NL_TURBO3_VEC (QK_TURBO3 / 4)    // vec FA iterations per block

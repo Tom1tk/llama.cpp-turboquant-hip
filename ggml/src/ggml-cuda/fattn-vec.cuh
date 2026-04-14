@@ -10,6 +10,16 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
     return 128;
 }
 
+static __device__ __forceinline__ const char * ggml_cuda_fattn_vec_kv_row(
+        const char * tile_base,
+        const char * base,
+        const int32_t * __restrict__ kv_indices,
+        const int logical_pos,
+        const int local_pos,
+        const int32_t row_stride) {
+    return kv_indices ? base + int64_t(kv_indices[logical_pos])*row_stride : tile_base + local_pos*row_stride;
+}
+
 // Currently llvm with the amdgcn target does not support unrolling loops
 // that contain a break that can not be resolved at compile time.
 #ifdef __clang__
@@ -104,6 +114,8 @@ static __global__ void flash_attn_ext_vec(
     Q += nb03*sequence + nb02* head              + nb01*ic0;
     K += nb13*sequence + nb12*(head / gqa_ratio);
     V += nb23*sequence + nb22*(head / gqa_ratio);
+    const char * K_base = K;
+    const char * V_base = V;
 
     const half * maskh  = (const half  *) (mask + nb33*(sequence % ne33) + nb31*ic0);
 
@@ -269,7 +281,8 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                float sum = vec_dot_KQ(K + i_KQ*nb11, Q_reg[j], Q_i32[j], Q_ds[j]);
+                const char * K_row = ggml_cuda_fattn_vec_kv_row(K, K_base, kv_indices, k_VKQ_0 + i_KQ, i_KQ, nb11);
+                float sum = vec_dot_KQ(K_row, Q_reg[j], Q_i32[j], Q_ds[j]);
                 sum = warp_reduce_sum<nthreads_KQ>(sum);
 
                 if (use_logit_softcap) {
@@ -343,19 +356,20 @@ static __global__ void flash_attn_ext_vec(
                 if (dominated) { continue; }
             }
 
+            const char * V_row = ggml_cuda_fattn_vec_kv_row(V, V_base, kv_indices, k_VKQ_0 + k, k, nb21);
 #pragma unroll
             for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
                 half2 tmp[V_rows_per_thread/2];
                 if constexpr (type_V == GGML_TYPE_BF16) {
                     float2 tmp_f[V_rows_per_thread/2];
-                    dequantize_V(V + k*nb21, tmp_f,
+                    dequantize_V(V_row, tmp_f,
                         2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
                     for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
                         tmp[i_VKQ_1] = __float22half2_rn(tmp_f[i_VKQ_1]);
                     }
                 } else {
-                    dequantize_V(V + k*nb21, tmp,
+                    dequantize_V(V_row, tmp,
                         2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
                 }
 #pragma unroll
@@ -384,10 +398,11 @@ static __global__ void flash_attn_ext_vec(
                 if (dominated) { continue; }
             }
 
+            const char * V_row = ggml_cuda_fattn_vec_kv_row(V, V_base, kv_indices, k_VKQ_0 + k, k, nb21);
 #pragma unroll
             for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
                 float2 tmp[V_rows_per_thread/2];
-                dequantize_V(V + k*nb21, tmp,
+                dequantize_V(V_row, tmp,
                     2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
                 for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {

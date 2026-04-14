@@ -2353,6 +2353,12 @@ extern "C" {
     GGML_API enum ggml_prec ggml_flash_attn_ext_get_prec(
             const struct ggml_tensor * a);
 
+    // Optional KV row indices for sparse cache access.
+    // indices is a contiguous 1D i32 tensor mapping logical to physical KV rows.
+    GGML_API void ggml_flash_attn_ext_set_kv_indices(
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * indices);
+
     GGML_API void ggml_flash_attn_ext_add_sinks(
             struct ggml_tensor * a,
             struct ggml_tensor * sinks);

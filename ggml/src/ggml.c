@@ -5406,6 +5406,25 @@ enum ggml_prec ggml_flash_attn_ext_get_prec(
     return (enum ggml_prec) prec_i32;
 }
 
+void ggml_flash_attn_ext_set_kv_indices(
+        struct ggml_tensor * a,
+        struct ggml_tensor * indices) {
+    if (!indices) {
+        a->src[5] = NULL;
+        return;
+    }
+
+    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
+    GGML_ASSERT(a->src[5] == NULL);
+    GGML_ASSERT(indices->type == GGML_TYPE_I32);
+    GGML_ASSERT(ggml_is_vector(indices));
+    GGML_ASSERT(ggml_is_contiguous(indices));
+    GGML_ASSERT(indices->ne[0] <= a->src[1]->ne[1]); // <= K seq len
+    GGML_ASSERT(indices->ne[0] <= a->src[2]->ne[1]); // <= V seq len
+
+    a->src[5] = indices;
+}
+
 void ggml_flash_attn_ext_add_sinks(
         struct ggml_tensor * a,
         struct ggml_tensor * sinks) {

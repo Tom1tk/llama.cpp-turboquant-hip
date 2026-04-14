@@ -209,6 +209,7 @@ quantization noise is more harmful than the TILE fallback behavior.
 - **TriAttention KV pruning** — frequency-based scoring + GPU compaction kernel
 - **Hybrid model support** — SSM+attention (Qwen3.5), ISWA (Gemma 4)
 - **FP32 WHT butterfly** — no precision loss in rotation
+- **Sparse V skip** — skips V dequant+accumulation for negligible attention weights (<1e-6 after softmax), saves HBM bandwidth at long context. Benefits all V types including q8_0 (+1.8% decode on Gemma 4 31B at 16K)
 
 ## Known issues
 
@@ -273,3 +274,18 @@ At 131K context, turbo3 saves 6.4 GiB vs f16. turbo2 saves 6.9 GiB.
 | **turbo3 + TriAttention 50%** | **~10.2×** | Qwen3.5-27B: PPL 6.23 (+1.8% vs f16) |
 
 Combo validated on Qwen3.5-27B Q5_K_M (hybrid SSM+attn) and Qwen3-8B Q4_K_M. GSM8K validated on full 1319 problems (2026-04-11).
+
+**Full 20-chunk combo evaluation (wikitext-2, ctx=16K):**
+
+| Model | Config | PPL (20ch) | vs f16 |
+|---|---|---|---|
+| Qwen3-8B Q4_K_M | f16 | 8.15 ± 0.06 | — |
+| | turbo3 | 8.61 ± 0.06 | +5.6% |
+| | turbo3 + TriAtt 75% | 8.99 ± 0.07 | +10.3% |
+| | turbo3 + TriAtt 25% | 9.33 ± 0.07 | +14.5% |
+| Qwen3.5-27B Q5_K_M | f16 | 6.91 ± 0.05 | — |
+| | turbo3 | 6.94 ± 0.05 | +0.5% |
+| | turbo3 + TriAtt 75% | 7.17 ± 0.05 | +3.8% |
+| | turbo3 + TriAtt 25% | 7.43 ± 0.05 | +7.5% |
+
+27B model shows minimal degradation across all configs. 8B model is more sensitive to both quantization and pruning, as expected from smaller capacity.

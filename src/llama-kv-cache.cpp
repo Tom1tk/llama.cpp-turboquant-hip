@@ -2909,6 +2909,29 @@ bool llama_kv_cache_context::apply() {
     kv->apply_ubatch(sinfos[i_cur], ubatches[i_cur]);
     n_kv = kv->get_n_kv(sinfos[i_cur]);
 
+    // TriAttention: prefix-pruning test (TRIA_PREFIX_PRUNE=<percent>)
+    // Only active during decode (single token) — VEC kernel path only.
+    {
+        const char * env = getenv("TRIA_PREFIX_PRUNE");
+        if (env && n_kv > 256 && ubatches[i_cur].n_tokens == 1) {
+            const int pct = atoi(env);
+            if (pct > 0 && pct < 100) {
+                int32_t n_active = (int32_t)(n_kv * pct / 100);
+                n_active = (n_active / 256) * 256; // align to FATTN_KQ_STRIDE
+                if (n_active >= 256) {
+                    kv->active_kv.resize(n_active);
+                    for (int32_t i = 0; i < n_active; ++i) {
+                        kv->active_kv[i] = i;
+                    }
+                } else {
+                    kv->active_kv.clear();
+                }
+            }
+        } else {
+            kv->active_kv.clear();
+        }
+    }
+
     // InnerQ: check if CUDA calibration finalized and tensor needs update
     if (kv->get_turbo_innerq_scale_inv() != nullptr && turbo_innerq_needs_tensor_update()) {
         ggml_tensor * t = kv->get_turbo_innerq_scale_inv();

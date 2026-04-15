@@ -1252,12 +1252,17 @@ common_init_result::common_init_result(common_params & params) :
 
     pimpl->context.reset(lctx);
 
-    // Load TriAttention stats if configured
-    if (!params.triattention_stats_path.empty()) {
-        pimpl->tria = tria_load(params.triattention_stats_path.c_str());
+    // Load TriAttention stats if configured (CLI or env var)
+    std::string tria_path = params.triattention_stats_path;
+    if (tria_path.empty()) {
+        const char * env = getenv("TRIA_STATS_PATH");
+        if (env) tria_path = env;
+    }
+    if (!tria_path.empty()) {
+        pimpl->tria = tria_load(tria_path.c_str());
         if (pimpl->tria) {
             LOG_INF("%s: loaded TriAttention stats from %s (%u layers, %u heads)\n",
-                    __func__, params.triattention_stats_path.c_str(),
+                    __func__, tria_path.c_str(),
                     pimpl->tria->num_layers, pimpl->tria->num_heads);
             LOG_INF("%s: TriAttention budget=%d%% window=%d interval=%d sink=%d\n",
                     __func__, params.triattention_budget_pct,
@@ -1274,7 +1279,7 @@ common_init_result::common_init_result(common_params & params) :
             );
         } else {
             LOG_ERR("%s: failed to load TriAttention stats from %s\n",
-                    __func__, params.triattention_stats_path.c_str());
+                    __func__, tria_path.c_str());
         }
     }
 }

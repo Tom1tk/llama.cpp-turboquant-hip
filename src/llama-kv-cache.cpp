@@ -2972,6 +2972,14 @@ void llama_kv_cache_context::set_input_kv_indices(ggml_tensor * dst) const {
     memcpy(dst->data, kv->active_kv.data(), kv->active_kv.size() * sizeof(int32_t));
 }
 
+bool llama_kv_cache_context::kv_active_empty() const {
+    return kv->active_kv.empty();
+}
+
+int64_t llama_kv_cache_context::kv_active_size() const {
+    return (int64_t)kv->active_kv.size();
+}
+
 ggml_tensor * llama_kv_cache_context::get_turbo_rotation() const {
     return kv->get_turbo_rotation();
 }

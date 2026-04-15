@@ -408,6 +408,10 @@ public:
     // TriAttention: fill kv_indices tensor with active_kv data
     void set_input_kv_indices(ggml_tensor * dst) const;
 
+    // TriAttention: helpers for graph reuse checks
+    bool    kv_active_empty() const;
+    int64_t kv_active_size()  const;
+
     // TurboQuant rotation accessors
     ggml_tensor * get_turbo_rotation() const;
     ggml_tensor * get_turbo_rotation_inv() const;

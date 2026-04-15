@@ -492,6 +492,17 @@ bool llm_graph_input_attn_kv::can_reuse(const llm_graph_params & params) {
 
     res &= can_reuse_kq_mask(self_kq_mask, mctx, params.ubatch, params.cparams);
 
+    // TriAttention: invalidate if kv_indices presence or size changed
+    {
+        const bool had_idx = (self_kv_indices != nullptr);
+        const bool has_idx = !mctx->kv_active_empty();
+        if (had_idx != has_idx) {
+            res = false;
+        } else if (had_idx && has_idx && self_kv_indices->ne[0] != mctx->kv_active_size()) {
+            res = false;
+        }
+    }
+
     return res;
 }
 

@@ -1877,7 +1877,8 @@ ggml_tensor * llm_graph_context::build_attn_mha(
          ggml_tensor * sinks,
          ggml_tensor * v_mla,
                float   kq_scale,
-                 int   il) const {
+                 int   il,
+         ggml_tensor * kv_indices) const {
     const bool v_trans = v->nb[1] > v->nb[2];
 
     // split the batch into streams if needed
@@ -1921,13 +1922,9 @@ ggml_tensor * llm_graph_context::build_attn_mha(
         ggml_flash_attn_ext_add_sinks(cur, sinks);
         ggml_flash_attn_ext_set_prec (cur, GGML_PREC_F32);
 
-        // TriAttention: attach KV indirection index if available
-        if (getenv("TRIA_IDENTITY_MAP")) {
-            const int64_t n_kv = k->ne[1];
-            ggml_tensor * kv_idx_f = ggml_arange(ctx0, 0.0f, (float)n_kv, 1.0f);
-            ggml_tensor * kv_idx   = ggml_cast(ctx0, kv_idx_f, GGML_TYPE_I32);
-            ggml_set_name(kv_idx, "tria_identity_idx");
-            ggml_flash_attn_ext_set_kv_indices(cur, kv_idx);
+        // TriAttention: attach KV indirection index if provided
+        if (kv_indices) {
+            ggml_flash_attn_ext_set_kv_indices(cur, kv_indices);
         }
 
         // TurboQuant: inverse WHT on FA output when V values are WHT-rotated.
@@ -2217,7 +2214,8 @@ ggml_tensor * llm_graph_context::build_attn(
         q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);  // 0 = forward, 0 = auto group size from q->ne[0]
     }
 
-    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
+    ggml_tensor * kv_idx = mctx_cur->get_kv_indices(ctx0);
+    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il, kv_idx);
     cb(cur, "kqv_out", il);
 
     // TurboQuant: if V was padded, the output has padded dimensions.
@@ -2335,7 +2333,8 @@ ggml_tensor * llm_graph_context::build_attn(
         q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);  // 0 = forward, 0 = auto group size
     }
 
-    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
+    ggml_tensor * kv_idx = mctx_cur->get_kv_indices(ctx0);
+    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il, kv_idx);
     cb(cur, "kqv_out", il);
 
     // TurboQuant: if V was padded (MLA: V is view of K, may have padded dim),
@@ -2446,7 +2445,8 @@ ggml_tensor * llm_graph_context::build_attn(
         q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);
     }
 
-    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
+    ggml_tensor * kv_idx = mctx_cur->get_kv_indices(ctx0);
+    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il, kv_idx);
     cb(cur, "kqv_out", il);
 
     // TurboQuant: if V was padded, extract original V head_dim after inverse WHT

@@ -293,8 +293,10 @@ int tria_maybe_score(
             }
             float std = sqrtf(var / n_new + 1e-8f);
 
-            /* Layer-aware max aggregation: weight z-scores by layer importance.
+            /* Layer-aware max aggregation: weight positive z-scores by layer importance.
              * Diffuse early layers (high layer_budget_scale) contribute more.
+             * Leave negative z-scores unweighted: scaling negative scores would invert the
+             * intended retention bias by making important layers' below-mean tokens look worse.
              * Preserves max-aggregation semantics (same eviction rate as before)
              * while using calibration data to improve token selection quality. */
             float layer_weight = rt->stats->layer_budget_scales[li] / layer_weight_mean;
@@ -303,7 +305,7 @@ int tria_maybe_score(
 
             for (int s = 0; s < n_new; s++) {
                 float z = (scores[s] - mean) / std;
-                float wz = z * layer_weight;
+                float wz = z > 0.0f ? z * layer_weight : z;
                 if (wz > rt->global_scores[score_start + s])
                     rt->global_scores[score_start + s] = wz;
             }

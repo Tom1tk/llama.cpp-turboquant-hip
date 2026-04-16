@@ -19,6 +19,7 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <set>
 #include <stdexcept>
 
 //
@@ -3466,6 +3467,31 @@ size_t llama_state_seq_load_file(llama_context * ctx, const char * filepath, lla
 
 ///
 
+static bool tria_is_single_token_ar_decode_batch(const llama_batch & batch) {
+    if (batch.n_tokens <= 0) {
+        return false;
+    }
+
+    std::set<llama_seq_id> seen;
+    for (int32_t i = 0; i < batch.n_tokens; ++i) {
+        const int32_t n_seq_id = batch.n_seq_id ? batch.n_seq_id[i] : 1;
+        if (n_seq_id != 1) {
+            return false;
+        }
+
+        if (batch.pos && batch.pos[i] <= 0) {
+            return false;
+        }
+
+        const llama_seq_id seq_id = batch.seq_id ? batch.seq_id[i][0] : 0;
+        if (!seen.insert(seq_id).second) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 int32_t llama_encode(
         llama_context * ctx,
           llama_batch   batch) {
@@ -3498,7 +3524,7 @@ int32_t llama_decode(
             }
         }
     }
-    if (ret == 0 && g_tria_rt && batch.n_tokens <= 1) {
+    if (ret == 0 && g_tria_rt && tria_is_single_token_ar_decode_batch(batch)) {
         tria_maybe_score(g_tria_rt, (void *)ctx);
     }
 

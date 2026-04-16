@@ -73,6 +73,16 @@ struct tria_stats * tria_load(const char *path) {
             fprintf(stderr, "tria_load: truncated layer_budget_scales\n");
             free(s->layer_budget_scales); free(s); fclose(fp); return NULL;
         }
+        /* Validate: any out-of-range value means the field wasn't written correctly */
+        int bad = 0;
+        for (uint32_t i = 0; i < nl; i++) {
+            float v = s->layer_budget_scales[i];
+            if (!isfinite(v) || v <= 0.0f || v > 16.0f) { bad = 1; break; }
+        }
+        if (bad) {
+            fprintf(stderr, "tria_load: invalid layer_budget_scales, falling back to 1.0\n");
+            for (uint32_t i = 0; i < nl; i++) s->layer_budget_scales[i] = 1.0f;
+        }
     } else {
         for (uint32_t i = 0; i < nl; i++) s->layer_budget_scales[i] = 1.0f;
     }

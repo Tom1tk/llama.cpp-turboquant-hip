@@ -3498,7 +3498,7 @@ int32_t llama_decode(
             }
         }
     }
-    if (ret == 0 && g_tria_rt) {
+    if (ret == 0 && g_tria_rt && batch.n_tokens <= 1) {
         tria_maybe_score(g_tria_rt, (void *)ctx);
     }
 

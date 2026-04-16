@@ -115,6 +115,26 @@ int tria_maybe_score(
     int budget = (n_old * rt->budget_pct) / 100;
     if (budget <= 0) budget = 1;
 
+    /* Exponential ramp eviction: cap doubles each pass until budget is reached.
+     * Pass 0: max 10%, pass 1: 20%, pass 2: 40%, pass 3: 80%, pass 4+: 100%.
+     * Initial cap overridable via TRIA_RAMP_START_PCT (default 10).
+     * Prevents abrupt semantic shock after long prefill while converging fast. */
+    {
+        const char * rsp = getenv("TRIA_RAMP_START_PCT");
+        int ramp_start = rsp ? atoi(rsp) : 10;
+        if (ramp_start < 1) ramp_start = 1;
+        if (ramp_start > 100) ramp_start = 100;
+        /* cap_pct = ramp_start * 2^pass, clamped to 100 */
+        int cap_pct = ramp_start;
+        for (int p = 0; p < rt->score_pass && cap_pct < 100; p++)
+            cap_pct *= 2;
+        if (cap_pct > 100) cap_pct = 100;
+        int max_evict = n_old * cap_pct / 100;
+        if (max_evict < 256) max_evict = 256;
+        int ramp_budget = n_old - max_evict;
+        if (ramp_budget > budget) budget = ramp_budget;
+    }
+
     /* Force full rescore every pass (incremental disabled pending fix) */
     #define TRIA_FULL_RESCORE_INTERVAL 1
     int full_rescore = (rt->score_pass % TRIA_FULL_RESCORE_INTERVAL == 0)
@@ -178,9 +198,9 @@ int tria_maybe_score(
             if (!full_rescore && rt->global_scores && rt->global_n > 0) {
                 int copy_n = rt->global_n < n_old ? rt->global_n : n_old;
                 memcpy(new_gs, rt->global_scores, copy_n * sizeof(float));
-                for (int i = copy_n; i < n_old; i++) new_gs[i] = -1e30f;
+                for (int i = copy_n; i < n_old; i++) new_gs[i] = 0.0f;
             } else {
-                for (int i = 0; i < n_old; i++) new_gs[i] = -1e30f;
+                for (int i = 0; i < n_old; i++) new_gs[i] = 0.0f;
             }
             free(rt->global_scores);
             rt->global_scores = new_gs;
@@ -191,10 +211,10 @@ int tria_maybe_score(
             return 0;
         }
     } else if (full_rescore) {
-        for (int i = 0; i < n_old; i++) rt->global_scores[i] = -1e30f;
+        for (int i = 0; i < n_old; i++) rt->global_scores[i] = 0.0f;
         rt->global_n = n_old;
     } else {
-        for (int i = n_prev; i < n_old; i++) rt->global_scores[i] = -1e30f;
+        for (int i = n_prev; i < n_old; i++) rt->global_scores[i] = 0.0f;
     }
     rt->global_budget = budget;
     rt->compaction_active = 0;
@@ -259,11 +279,47 @@ int tria_maybe_score(
                 var += d * d;
             }
             float std = sqrtf(var / n_new + 1e-8f);
+
+            /* Per-layer budget vote: tokens in top-K for this layer get a
+             * weighted vote. Layer weight = layer_budget_scale (diffuse early
+             * layers get higher weight than concentrated late layers).
+             * This replaces the old max-aggregation which ignored layer scales. */
+            int layer_budget = tria_layer_budget(rt->stats, li, budget);
+            float layer_weight = rt->stats->layer_budget_scales[li];
+            if (layer_weight < 0.25f) layer_weight = 0.25f;
+            if (layer_weight > 4.0f)  layer_weight = 4.0f;
+
+            /* Find threshold for top layer_budget tokens in this layer */
+            float * sorted_z = (float *)malloc(n_new * sizeof(float));
+            float threshold = -1e30f;
+            if (sorted_z) {
+                for (int s = 0; s < n_new; s++)
+                    sorted_z[s] = (scores[s] - mean) / std;
+                /* partial sort: find (n_new - layer_budget)-th smallest */
+                int keep = layer_budget < n_new ? layer_budget : n_new;
+                /* simple selection for threshold */
+                float * tmp = (float *)malloc(n_new * sizeof(float));
+                if (tmp) {
+                    memcpy(tmp, sorted_z, n_new * sizeof(float));
+                    /* nth_element via partial selection sort */
+                    int nth = n_new - keep;
+                    for (int i = 0; i < nth + 1 && i < n_new; i++) {
+                        int min_j = i;
+                        for (int j = i + 1; j < n_new; j++)
+                            if (tmp[j] < tmp[min_j]) min_j = j;
+                        float t = tmp[i]; tmp[i] = tmp[min_j]; tmp[min_j] = t;
+                    }
+                    threshold = (nth < n_new) ? tmp[nth] : -1e30f;
+                    free(tmp);
+                }
+                free(sorted_z);
+            }
+
             for (int s = 0; s < n_new; s++) {
                 float z = (scores[s] - mean) / std;
-                if (z > rt->global_scores[score_start + s]) {
-                    rt->global_scores[score_start + s] = z;
-                }
+                /* Vote: tokens above threshold get layer_weight * 100 bonus */
+                float vote = (z >= threshold) ? layer_weight * 100.0f : 0.0f;
+                rt->global_scores[score_start + s] += vote + z * layer_weight;
             }
         }
     }

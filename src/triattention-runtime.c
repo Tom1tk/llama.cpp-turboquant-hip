@@ -261,6 +261,12 @@ int tria_maybe_score(
             free(k_f16);
         } else if (k_tensor->type == GGML_TYPE_F32) {
             ggml_backend_tensor_get(k_tensor, k_f32, read_offset, n_elem * sizeof(float));
+        } else if (k_tensor->type == GGML_TYPE_Q8_0) {
+            /* Q8_0 scoring via CPU dequantize is too slow for GPU tensors
+             * (requires ~80MB GPU->CPU transfer per scoring round at d=65k).
+             * TODO: implement GPU-side scoring kernel for quantized K cache.
+             * For now, skip and fall through to V-energy boost only. */
+            continue;
         } else {
             continue;
         }

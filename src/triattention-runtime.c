@@ -122,6 +122,10 @@ int tria_maybe_score(
     if (n_old <= 0) return 0;
 
     int budget = (n_old * rt->budget_pct) / 100;
+    {
+        const char * bt = getenv("TRIA_BUDGET_TOKENS");
+        if (bt) budget = atoi(bt);
+    }
     if (budget <= 0) budget = 1;
 
     /* Exponential ramp eviction (opt-in via TRIA_RAMP_START_PCT).

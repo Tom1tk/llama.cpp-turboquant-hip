@@ -6,9 +6,10 @@
 
 struct tria_backend g_tria_backend;
 
-#if defined(GGML_USE_CUDA)
-/* Static linking — wire up directly (GGML_USE_CUDA is defined for both
-   CUDA and HIP when GGML_BACKEND_DL is OFF) */
+#if defined(GGML_USE_HIP) && defined(GGML_USE_CUDA)
+/* Static HIP linking — GGML_USE_HIP is always set for HIP builds,
+   GGML_USE_CUDA is the compat macro only set when GGML_BACKEND_DL=OFF.
+   Both together = HIP static build = safe to resolve tria_hip_* symbols. */
 #include "triattention-hip.h"
 
 int tria_backend_init(void) {

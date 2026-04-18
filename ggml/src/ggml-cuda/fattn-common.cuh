@@ -1321,6 +1321,8 @@ void launch_fattn(
         half * ptr = nullptr;
         cudaStream_t stream;
         hip_f16_alloc(cudaStream_t s) : stream(s) {}
+        hip_f16_alloc(const hip_f16_alloc &) = delete;
+        hip_f16_alloc & operator=(const hip_f16_alloc &) = delete;
         ~hip_f16_alloc() {
             if (ptr) {
                 cudaStreamSynchronize(stream);

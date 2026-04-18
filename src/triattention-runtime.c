@@ -17,6 +17,55 @@
 
 struct tria_runtime * g_tria_rt = NULL;
 
+/* ---- Inverse Turbo WHT for scoring ---- */
+/* Must match sign arrays in ggml-cpu/ops.cpp and ggml-turbo-quant.c */
+static const float tria_wht_s1[128] = {-1,1,1,-1,-1,1,-1,1,-1,-1,1,1,1,1,1,1,1,-1,1,-1,1,-1,-1,1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,1,-1,1,-1,1,-1,1,1,1,1,-1,1,-1,1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1};
+static const float tria_wht_s2[128] = {1,1,1,1,-1,1,1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,-1,1,-1,1,-1,1,-1,-1,1,-1,1,1,1,1,1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,1,1,-1,1,-1,1,-1,-1,-1,-1,-1,1,-1};
+
+/* Apply inverse WHT to one group of 128 floats in-place.
+ * Inverse = s2 → WHT butterfly → s1 → normalize (direction=1). */
+static void tria_inverse_wht_group(float *x, int gs) {
+    const float inv_sqrt = 1.0f / sqrtf((float)gs);
+    /* Apply s2 first (inverse direction) */
+    for (int i = 0; i < gs; i++) x[i] *= tria_wht_s2[i];
+    /* WHT butterfly */
+    for (int h = 1; h < gs; h *= 2) {
+        for (int i = 0; i < gs; i += h * 2) {
+            for (int j = i; j < i + h; j++) {
+                float a = x[j], b = x[j + h];
+                x[j] = a + b;
+                x[j + h] = a - b;
+            }
+        }
+    }
+    /* Normalize + apply s1 */
+    for (int i = 0; i < gs; i++) x[i] *= inv_sqrt * tria_wht_s1[i];
+}
+
+/* Apply inverse WHT to a full dequantized row (multiple heads, each padded to padded_hd).
+ * After inverse WHT, copy only the first hd elements per head into dst.
+ * Processes per 128-element group — no full-head buffer needed. */
+static void tria_inverse_wht_row(const float *src_phys, float *dst_logical,
+                                  int nkv, int padded_hd, int hd) {
+    const int gs = 128;
+    float buf[128];
+    for (int kvi = 0; kvi < nkv; kvi++) {
+        const float *head_in = src_phys + kvi * padded_hd;
+        float *head_out = dst_logical + kvi * hd;
+        int groups = padded_hd / gs;
+        for (int g = 0; g < groups; g++) {
+            int src_off = g * gs;
+            memcpy(buf, head_in + src_off, gs * sizeof(float));
+            tria_inverse_wht_group(buf, gs);
+            /* Copy only the portion that falls within logical hd */
+            int dst_off = g * gs;
+            if (dst_off >= hd) break;
+            int copy_len = (dst_off + gs <= hd) ? gs : (hd - dst_off);
+            memcpy(head_out + dst_off, buf, copy_len * sizeof(float));
+        }
+    }
+}
+
 struct llama_kv_layer {
     struct ggml_tensor * k;
     struct ggml_tensor * v;
@@ -197,15 +246,17 @@ int tria_maybe_score(
 
     if (!ctx) { rt->n_scored = n_kv; return 0; }
 
-    /* Validate stats dimensions against actual KV tensor (Codex review) */
+    /* Validate stats dimensions against actual KV tensor.
+     * Turbo types pad head_dim to 128 multiples — checked per-layer below. */
     {
         struct ggml_tensor * k0 = tria_get_k_tensor(ctx, 0);
         if (k0) {
             int64_t actual_row = k0->ne[0];
             int expected_row = nkv * hd;
-            if (actual_row != expected_row) {
-                fprintf(stderr, "tria_score: TRIA stats mismatch: expected row %d, got %d — skipping\n",
-                        expected_row, (int)actual_row);
+            int expected_padded = nkv * (((hd + 127) / 128) * 128);
+            if (actual_row != expected_row && actual_row != expected_padded) {
+                fprintf(stderr, "tria_score: TRIA stats mismatch: expected row %d (or padded %d), got %d — skipping\n",
+                        expected_row, expected_padded, (int)actual_row);
                 rt->n_scored = n_kv;
                 return 0;
             }
@@ -384,7 +435,17 @@ int tria_maybe_score(
             continue;  /* skip CPU path for this layer */
         }
 
-        size_t row_size = ggml_row_size(k_tensor->type, n_embd_k_gqa);
+        /* Compute per-layer physical row width (turbo types may pad to 128 multiples) */
+        int layer_phys_hd = hd;
+        int n_embd_k_phys = n_embd_k_gqa;
+        {
+            int64_t actual_row = k_tensor->ne[0];
+            if (actual_row != n_embd_k_gqa) {
+                layer_phys_hd = (int)(actual_row / nkv);
+                n_embd_k_phys = (int)actual_row;
+            }
+        }
+        size_t row_size = ggml_row_size(k_tensor->type, n_embd_k_phys);
         size_t read_offset = (size_t)score_start * row_size;
         size_t read_bytes = (size_t)n_new * row_size;
 
@@ -423,18 +484,35 @@ int tria_maybe_score(
             }
             free(k_q8);
         } else {
-            /* Generic dequant path — handles turbo2/3/4 and any future quantized KV type */
+            /* Generic dequant path — handles turbo2/3/4 and any future quantized KV type.
+             * Turbo types store K in WHT-rotated domain; we must apply inverse WHT
+             * to recover the original RoPE frequency-pair basis for scoring. */
             const struct ggml_type_traits * traits = ggml_get_type_traits(k_tensor->type);
             if (!traits || !traits->to_float) { continue; }
             uint8_t * k_raw = (uint8_t *)malloc(read_bytes);
-            if (!k_raw) continue;
+            float * k_phys = (float *)malloc((size_t)n_embd_k_phys * sizeof(float));
+            if (!k_raw || !k_phys) { free(k_raw); free(k_phys); continue; }
             ggml_backend_tensor_get(k_tensor, k_raw, read_offset, read_bytes);
+            int is_turbo = (k_tensor->type == GGML_TYPE_TURBO2_0 ||
+                            k_tensor->type == GGML_TYPE_TURBO3_0 ||
+                            k_tensor->type == GGML_TYPE_TURBO4_0);
             for (int s = 0; s < n_new; s++) {
-                traits->to_float(k_raw + (size_t)s * row_size,
-                                 k_f32 + (size_t)s * n_embd_k_gqa,
-                                 n_embd_k_gqa);
+                traits->to_float(k_raw + (size_t)s * row_size, k_phys, n_embd_k_phys);
+                if (is_turbo && layer_phys_hd != hd) {
+                    /* Inverse WHT per head, then copy logical hd prefix */
+                    tria_inverse_wht_row(k_phys, k_f32 + (size_t)s * n_embd_k_gqa,
+                                         nkv, layer_phys_hd, hd);
+                } else if (is_turbo) {
+                    /* No padding but still WHT domain — inverse WHT in-place */
+                    tria_inverse_wht_row(k_phys, k_f32 + (size_t)s * n_embd_k_gqa,
+                                         nkv, hd, hd);
+                } else {
+                    memcpy(k_f32 + (size_t)s * n_embd_k_gqa, k_phys,
+                           (size_t)n_embd_k_gqa * sizeof(float));
+                }
             }
             free(k_raw);
+            free(k_phys);
         }
 
         for (int kvi = 0; kvi < nkv; kvi++) {
@@ -505,23 +583,36 @@ int tria_maybe_score(
                 if (!row_buf) continue;
 
                 {
-                    /* Generic V energy: dequant to f32, compute L2 norm.
-                     * Works for all types including turbo2/3/4. */
+                    /* V energy: compute L2 norm per row */
                     const struct ggml_type_traits * vtraits = ggml_get_type_traits(v_tensor->type);
-                    float * v_f32 = (vtraits && vtraits->to_float)
-                        ? (float *)malloc((size_t)n_embd_v * sizeof(float)) : NULL;
-                    if (v_f32) {
+                    if (v_tensor->type == GGML_TYPE_F32) {
+                        /* f32 has no to_float in type traits — read directly */
                         for (int s = 0; s < n_old; s++) {
                             ggml_backend_tensor_get(v_tensor, row_buf,
                                                     (size_t)s * v_row_size, v_row_size);
-                            vtraits->to_float(row_buf, v_f32, n_embd_v);
+                            const float * vf = (const float *)row_buf;
                             float energy = 0.0f;
                             for (int d = 0; d < n_embd_v; d++)
-                                energy += v_f32[d] * v_f32[d];
+                                energy += vf[d] * vf[d];
                             v_energy[s] += energy;
                         }
-                        free(v_f32);
                         v_layers++;
+                    } else if (vtraits && vtraits->to_float) {
+                        /* Generic: f16, q8_0, turbo2/3/4, etc. */
+                        float * v_f32 = (float *)malloc((size_t)n_embd_v * sizeof(float));
+                        if (v_f32) {
+                            for (int s = 0; s < n_old; s++) {
+                                ggml_backend_tensor_get(v_tensor, row_buf,
+                                                        (size_t)s * v_row_size, v_row_size);
+                                vtraits->to_float(row_buf, v_f32, n_embd_v);
+                                float energy = 0.0f;
+                                for (int d = 0; d < n_embd_v; d++)
+                                    energy += v_f32[d] * v_f32[d];
+                                v_energy[s] += energy;
+                            }
+                            free(v_f32);
+                            v_layers++;
+                        }
                     }
                 }
                 free(row_buf);

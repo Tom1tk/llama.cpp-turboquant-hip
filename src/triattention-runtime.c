@@ -75,6 +75,7 @@ extern struct ggml_tensor * tria_get_k_tensor(void * ctx, int layer_idx);
 extern struct ggml_tensor * tria_get_v_tensor(void * ctx, int layer_idx);
 extern int tria_get_n_kv(void * ctx);
 extern int tria_get_used_n_kv(void * ctx);
+extern int tria_get_n_ctx(void * ctx);
 extern int tria_get_kv_positions(void * ctx, int * positions, int max_positions);
 extern int tria_compact_kv(struct tria_runtime * rt, void * ctx);
 
@@ -186,7 +187,13 @@ int tria_maybe_score(
     int n_old = n_used - rt->window;
     if (n_old <= 0) return 0;
 
-    int budget = (n_old * rt->budget_pct) / 100;
+    /* Budget = pct% of n_ctx (total context), minus window (always kept).
+     * This means budget=50% keeps ~50% of total context, not 50% of old tokens.
+     * Previous behavior (pct of n_old) converged to ~250 tokens regardless of ctx. */
+    int n_ctx = tria_get_n_ctx(ctx);
+    if (n_ctx <= 0) n_ctx = 4096;
+    int budget = (n_ctx * rt->budget_pct) / 100 - rt->window;
+    if (budget > n_old) budget = n_old;  /* can't keep more than we have */
     int absolute_budget = 0;
     {
         const char * bt = getenv("TRIA_BUDGET_TOKENS");

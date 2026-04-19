@@ -63,6 +63,12 @@ int tria_get_used_n_kv(void * ctx_void) {
     return (int) kv->get_used_n_kv();
 }
 
+int tria_get_n_ctx(void * ctx_void) {
+    auto * ctx = (llama_context *)ctx_void;
+    if (!ctx) return 0;
+    return (int) llama_n_ctx(ctx);
+}
+
 int tria_get_kv_positions(void * ctx_void, int * positions, int max_positions) {
     auto * ctx = (llama_context *)ctx_void;
     if (!ctx || !positions || max_positions <= 0) {

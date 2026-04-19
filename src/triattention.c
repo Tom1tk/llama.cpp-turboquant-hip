@@ -192,14 +192,16 @@ static struct tria_cs_table * tria_cs_precompute(
             t->ka[s * fc + f] = sqrtf(kr[f]*kr[f] + ki[f]*ki[f]);
         }
         for (int o = 0; o < TRIA_N_OFFSETS; o++) {
-            /* When K is post-RoPE (cached after RoPE rotation), the scoring angle
-             * depends on whether calibration stats are pre-RoPE or post-RoPE.
-             * Current: use delta (relative distance) — matches pre-RoPE calibration
-             * with pre-RoPE K. For post-RoPE K, this needs validation. */
-            float delta = base_delta + offsets[o];
+            /* Post-RoPE K fix: use absolute future position, not relative delta.
+             * Cached K has phase arg(k_f) + ω_f·p_k. Using absolute future_pos:
+             *   E[q]·conj(K_cached)·e^{iω·future_pos}
+             *   = E[q]·conj(k_pre)·e^{iω·(future_pos - p_k)}
+             * which is exactly the paper's formula (eq.6) with Δ = future_pos - p_k.
+             * The old delta-based formula double-subtracted p_k. */
+            float future_pos = (float)(cur_pos + (int)offsets[o]);
             int base = (s * TRIA_N_OFFSETS + o) * fc;
             for (int f = 0; f < fc; f++) {
-                float angle = delta * omega[f];
+                float angle = future_pos * omega[f];
                 sincosf(angle, &t->sin_tab[base + f], &t->cos_tab[base + f]);
             }
         }

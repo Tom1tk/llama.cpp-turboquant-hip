@@ -173,25 +173,26 @@ static __global__ void tria_score_q8_0_kernel(
         }
     }
 
-    /* Compute trig score: mean over offsets of sum_f(|q_f|*|k_f|*cos(omega_f*delta+phi_f)) */
+    /* Compute trig score: mean over offsets — use absolute future_pos for post-RoPE K */
     const int pos = key_pos[s];
     float score_sum = 0.f;
 
     for (int oi = 0; oi < n_offsets; oi++) {
-        const int delta = offsets[oi];
+        const float future_pos = (float)(score_start + n_tokens + offsets[oi]);
         float s_trig = 0.f;
         for (int f = 0; f < freq_count; f++) {
             const float kr = k_f32[f];
             const float ki = k_f32[freq_count + f];
             const float qr = q_mean_real[f];
             const float qi = q_mean_imag[f];
-            /* |k_f| */
-            const float k_norm = sqrtf(kr*kr + ki*ki + 1e-8f);
-            /* phi_f = arg(q_f) - arg(k_f) */
+            /* Post-RoPE fix: use absolute future_pos in angle.
+             * angle = ω_f · future_pos + arg(E[q]) - arg(K_cached)
+             * K_cached = K_pre · e^{iωp_k}, so this gives:
+             * ω_f·(future_pos - p_k) + arg(E[q]) - arg(K_pre) = paper's formula */
             const float phi = atan2f(qi, qr) - atan2f(ki, kr);
-            /* S_trig = |q_f| * |k_f| * cos(omega_f * delta + phi_f) */
             const float q_norm = sqrtf(qr*qr + qi*qi + 1e-8f);
-            s_trig += q_norm * k_norm * cosf(omega[f] * (float)delta + phi);
+            const float k_norm = sqrtf(kr*kr + ki*ki + 1e-8f);
+            s_trig += q_norm * k_norm * cosf(omega[f] * future_pos + phi);
         }
         score_sum += s_trig;
     }

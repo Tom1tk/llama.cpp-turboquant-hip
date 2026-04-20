@@ -450,7 +450,7 @@ int tria_maybe_score(
             if (rt->gpu_global_scores) {
                 g_tria_backend.score_q8_0(
                     k_tensor->data,
-                    n_new, score_start,
+                    n_new, score_start, n_kv,
                     n_embd_k_gqa, nkv, hd, fc,
                     key_pos + score_start,
                     rt->gpu_omega,

@@ -39,6 +39,7 @@ int tria_hip_score_q8_0(
         const void * k_data_dev,
         int n_tokens,
         int score_start,
+        int cur_pos,
         int n_embd_k_gqa,
         int n_kv_heads,
         int head_dim,

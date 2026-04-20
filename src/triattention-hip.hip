@@ -123,6 +123,7 @@ static __global__ void tria_score_q8_0_kernel(
         const uint8_t * __restrict__ k_q8,   /* q8_0 K tensor, all tokens */
         int score_start,                       /* first token index */
         int n_tokens,                          /* tokens to score */
+        int cur_pos,                           /* current sequence position (from tria_get_n_kv) */
         int n_embd_k_gqa,                      /* total K dim */
         int kvi,                               /* which KV head */
         int head_dim,
@@ -173,26 +174,22 @@ static __global__ void tria_score_q8_0_kernel(
         }
     }
 
-    /* Compute trig score: mean over offsets — use absolute future_pos for post-RoPE K */
+    /* Compute trig score: mean over offsets — consistent with CPU path (cur_pos - p_k + offset) */
     const int pos = key_pos[s];
     float score_sum = 0.f;
 
     for (int oi = 0; oi < n_offsets; oi++) {
-        const float future_pos = (float)(score_start + n_tokens + offsets[oi]);
+        const float delta = (float)(cur_pos - pos + offsets[oi]);
         float s_trig = 0.f;
         for (int f = 0; f < freq_count; f++) {
             const float kr = k_f32[f];
             const float ki = k_f32[freq_count + f];
             const float qr = q_mean_real[f];
             const float qi = q_mean_imag[f];
-            /* Post-RoPE fix: use absolute future_pos in angle.
-             * angle = ω_f · future_pos + arg(E[q]) - arg(K_cached)
-             * K_cached = K_pre · e^{iωp_k}, so this gives:
-             * ω_f·(future_pos - p_k) + arg(E[q]) - arg(K_pre) = paper's formula */
             const float phi = atan2f(qi, qr) - atan2f(ki, kr);
             const float q_norm = sqrtf(qr*qr + qi*qi + 1e-8f);
             const float k_norm = sqrtf(kr*kr + ki*ki + 1e-8f);
-            s_trig += q_norm * k_norm * cosf(omega[f] * future_pos + phi);
+            s_trig += q_norm * k_norm * cosf(omega[f] * delta + phi);
         }
         score_sum += s_trig;
     }
@@ -340,6 +337,7 @@ extern "C" int tria_hip_score_q8_0(
         const void * k_data_dev,
         int n_tokens,
         int score_start,
+        int cur_pos,
         int n_embd_k_gqa,
         int n_kv_heads,
         int head_dim,
@@ -392,7 +390,7 @@ extern "C" int tria_hip_score_q8_0(
         hipLaunchKernelGGL(tria_score_q8_0_kernel,
             dim3(grid), dim3(block), 0, 0,
             (const uint8_t *)k_data_dev,
-            score_start, n_tokens, n_embd_k_gqa,
+            score_start, n_tokens, cur_pos, n_embd_k_gqa,
             kvi, head_dim, freq_count,
             d_key_pos, omega_dev,
             q_mean_real_dev + q_mean_offset + kvi * freq_count,

@@ -19,7 +19,7 @@ struct tria_backend {
     int  (*stats_upload)(const float *, int, const float *, const float *, int,
                          float **, float **, float **);
     void (*stats_free)(float *, float *, float *);
-    int  (*score_q8_0)(const void *, int, int, int, int, int, int,
+    int  (*score_q8_0)(const void *, int, int, int, int, int, int, int,
                        const int *, const float *, const float *, const float *,
                        int, float, float *, int, const int *);
     int  (*scores_download)(float *, const float *, int);

@@ -344,6 +344,7 @@ int tria_maybe_score(
     /* Detect K cache type and choose scoring path */
     int score_stride = 1;
     int use_gpu_scoring = 0;
+    if (getenv("TRIA_NO_GPU_SCORE")) use_gpu_scoring = -1; /* force CPU */
     {
         struct ggml_tensor * k0 = tria_get_k_tensor(ctx, 0);
         int is_q8_0 = k0 && k0->type == GGML_TYPE_Q8_0;
@@ -356,7 +357,7 @@ int tria_maybe_score(
          * across query heads correctly. Falls back to CPU path which does
          * proper per-query-head z-normalize + max aggregation (eq 12-13). */
         int nh = rt->stats->num_heads;
-        if (is_q8_0 && nh == nkv && hd <= 128 && hd % 32 == 0) {
+        if (is_q8_0 && nh == nkv && hd <= 128 && hd % 32 == 0 && use_gpu_scoring >= 0) {
             /* Lazy upload GPU stats on first use */
             if (!rt->gpu_omega || rt->gpu_q_mean_layers != nl || rt->gpu_q_mean_kv_heads != nkv) {
                 /* Build flat q_mean_real/imag arrays [nl * nkv * fc] */

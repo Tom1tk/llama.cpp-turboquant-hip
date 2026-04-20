@@ -192,16 +192,10 @@ static struct tria_cs_table * tria_cs_precompute(
             t->ka[s * fc + f] = sqrtf(kr[f]*kr[f] + ki[f]*ki[f]);
         }
         for (int o = 0; o < TRIA_N_OFFSETS; o++) {
-            /* Post-RoPE K fix: use absolute future position, not relative delta.
-             * Cached K has phase arg(k_f) + ω_f·p_k. Using absolute future_pos:
-             *   E[q]·conj(K_cached)·e^{iω·future_pos}
-             *   = E[q]·conj(k_pre)·e^{iω·(future_pos - p_k)}
-             * which is exactly the paper's formula (eq.6) with Δ = future_pos - p_k.
-             * The old delta-based formula double-subtracted p_k. */
-            float future_pos = (float)(cur_pos + (int)offsets[o]);
+            float delta = base_delta + offsets[o];
             int base = (s * TRIA_N_OFFSETS + o) * fc;
             for (int f = 0; f < fc; f++) {
-                float angle = future_pos * omega[f];
+                float angle = delta * omega[f];
                 sincosf(angle, &t->sin_tab[base + f], &t->cos_tab[base + f]);
             }
         }

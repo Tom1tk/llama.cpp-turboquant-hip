@@ -563,9 +563,23 @@ int tria_maybe_score(
                 }
             }
 
-            tria_score_kv_head(rt->stats, k_real, k_imag,
+            /* Extract non-rotary K dims (suffix after rotary portion) */
+            int nd = rt->stats->nonrot_dim;
+            float *k_nr = NULL;
+            if (nd > 0 && 2 * fc + nd <= hd) {
+                k_nr = malloc((size_t)n_new * nd * sizeof(float));
+                if (k_nr) {
+                    for (int s = 0; s < n_new; s++) {
+                        float *row = k_f32 + s * n_embd_k_gqa + kvi * hd;
+                        memcpy(k_nr + s * nd, row + 2 * fc, nd * sizeof(float));
+                    }
+                }
+            }
+
+            tria_score_kv_head(rt->stats, k_real, k_imag, k_nr,
                                key_pos + score_start,
                                n_kv, n_new, li, kvi, scores);
+            free(k_nr);
 
             float mean = 0, var = 0;
             for (int s = 0; s < n_new; s++) mean += scores[s];

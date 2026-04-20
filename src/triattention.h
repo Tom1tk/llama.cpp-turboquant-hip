@@ -33,6 +33,8 @@ struct tria_head_stats {
     float *q_mean_imag;   /* [fc] */
     float *q_abs_mean;    /* [fc] */
     float *qma;           /* [fc] precomputed |E[q_f]| */
+    float *q_nonrot_mean; /* [nonrot_dim] or NULL */
+    float *q_nonrot_abs;  /* [nonrot_dim] or NULL */
 };
 
 /* Full calibration data */
@@ -42,6 +44,7 @@ struct tria_stats {
     uint32_t num_kv_heads;
     uint32_t head_dim;
     uint32_t freq_count;     /* head_dim / 2 */
+    uint32_t nonrot_dim;     /* v3: non-rotary dimensions (0 for full-RoPE) */
     float    rope_theta;
     float    attn_scale;
     float   *layer_budget_scales;  /* [num_layers] */
@@ -70,6 +73,7 @@ void tria_score_kv_head(
     const struct tria_stats *stats,
     const float *k_pre_real,
     const float *k_pre_imag,
+    const float *k_nonrot,       /* [seq_len * nonrot_dim] or NULL */
     const int   *key_pos,
     int          cur_pos,
     int          seq_len,

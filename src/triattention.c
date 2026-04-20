@@ -28,7 +28,7 @@ struct tria_stats * tria_load(const char *path) {
         fprintf(stderr, "tria_load: truncated header\n");
         fclose(fp); return NULL;
     }
-    if (magic != TRIA_MAGIC || (version != 1 && version != 2)) {
+    if (magic != TRIA_MAGIC || (version != 1 && version != 2 && version != 3)) {
         fprintf(stderr, "tria_load: bad magic/version: %x v%u\n", magic, version);
         fclose(fp); return NULL;
     }
@@ -47,11 +47,17 @@ struct tria_stats * tria_load(const char *path) {
         free(s); fclose(fp); return NULL;
     }
 
+    /* v3: read nonrot_dim; v1/v2: default to 0 */
+    s->nonrot_dim = 0;
+    if (version >= 3) {
+        fread(&s->nonrot_dim, 4, 1, fp);
+    }
+
     /* Validate header values */
     uint32_t nl = s->num_layers, nh = s->num_heads, nkv = s->num_kv_heads, fc = s->freq_count;
     if (nl == 0 || nl > 1024 || nh == 0 || nh > 1024 || nkv == 0 || nkv > nh ||
         fc == 0 || fc > TRIA_MAX_FC || s->head_dim == 0 || s->head_dim > 2048 ||
-        nh % nkv != 0 || fc != s->head_dim / 2) {
+        nh % nkv != 0 || 2 * fc > s->head_dim + s->nonrot_dim) {
         fprintf(stderr, "tria_load: invalid dimensions: nl=%u nh=%u nkv=%u fc=%u hd=%u\n",
                 nl, nh, nkv, fc, s->head_dim);
         free(s); fclose(fp); return NULL;
@@ -127,6 +133,23 @@ struct tria_stats * tria_load(const char *path) {
             float r = hs->q_mean_real[f], i = hs->q_mean_imag[f];
             hs->qma[f] = sqrtf(r*r + i*i);
         }
+
+        /* v3: non-rotary Q stats */
+        hs->q_nonrot_mean = NULL;
+        hs->q_nonrot_abs = NULL;
+        if (version >= 3 && s->nonrot_dim > 0) {
+            uint32_t nd = s->nonrot_dim;
+            hs->q_nonrot_mean = malloc(nd * sizeof(float));
+            hs->q_nonrot_abs  = malloc(nd * sizeof(float));
+            if (!hs->q_nonrot_mean || !hs->q_nonrot_abs) {
+                fclose(fp); tria_free(s); return NULL;
+            }
+            if (fread(hs->q_nonrot_mean, 4, nd, fp) != nd ||
+                fread(hs->q_nonrot_abs,  4, nd, fp) != nd) {
+                fprintf(stderr, "tria_load: truncated nonrot data at head %u\n", h);
+                fclose(fp); tria_free(s); return NULL;
+            }
+        }
     }
 
     fclose(fp);
@@ -144,6 +167,8 @@ void tria_free(struct tria_stats *s) {
             free(s->heads[h].q_mean_imag);
             free(s->heads[h].q_abs_mean);
             free(s->heads[h].qma);
+            free(s->heads[h].q_nonrot_mean);
+            free(s->heads[h].q_nonrot_abs);
         }
         free(s->heads);
     }
@@ -215,7 +240,9 @@ static void score_keys_single_head(
     const struct tria_cs_table *cs,
     const float *k_real,
     const float *k_imag,
+    const float *k_nonrot,     /* [seq_len * nonrot_dim] or NULL */
     int          fc,
+    int          nonrot_dim,
     int          seq_len,
     float       *out
 ) {
@@ -266,7 +293,16 @@ static void score_keys_single_head(
         }
         /* DefensiveKV-lite: blend mean with max for worst-case robustness */
         float trig_mean = trig_sum / (float)TRIA_N_OFFSETS;
-        out[s] = trig_mean + tria_max_beta * (trig_max - trig_mean) + extra;
+        float content = 0.0f;
+        if (k_nonrot && hs->q_nonrot_mean && nonrot_dim > 0) {
+            const float *knr = k_nonrot + s * nonrot_dim;
+            for (int d = 0; d < nonrot_dim; d++) {
+                content += hs->q_nonrot_mean[d] * knr[d];
+            }
+            /* Scale: sqrt(rotary_dim / nonrot_dim) to balance with trig score */
+            content *= sqrtf((float)(2 * fc) / (float)nonrot_dim);
+        }
+        out[s] = trig_mean + tria_max_beta * (trig_max - trig_mean) + extra + content;
     }
     free(rel_r);
     free(rel_i);
@@ -280,6 +316,7 @@ void tria_score_kv_head(
     const struct tria_stats *stats,
     const float *k_pre_real,
     const float *k_pre_imag,
+    const float *k_nonrot,
     const int   *key_pos,
     int          cur_pos,
     int          seq_len,
@@ -290,6 +327,7 @@ void tria_score_kv_head(
     int nh  = stats->num_heads;
     int nkv = stats->num_kv_heads;
     int fc  = stats->freq_count;
+    int nd  = stats->nonrot_dim;
 
     /* Guard against division by zero (Codex review) */
     if (nkv == 0 || nh % nkv != 0 || seq_len <= 0) {
@@ -317,7 +355,7 @@ void tria_score_kv_head(
         int ah = kv_head_idx * gqa + g;
         const struct tria_head_stats *hs = &stats->heads[layer_idx * nh + ah];
 
-        score_keys_single_head(hs, cs, k_pre_real, k_pre_imag, fc, seq_len, tmp);
+        score_keys_single_head(hs, cs, k_pre_real, k_pre_imag, k_nonrot, fc, nd, seq_len, tmp);
 
         float mean = 0.0f;
         for (int s = 0; s < seq_len; s++) mean += tmp[s];

@@ -286,6 +286,13 @@ private:
     std::vector<int32_t> active_kv;
     int32_t active_kv_real_len = 0; // unpadded logical length (padding entries are masked)
 
+    // Phase 3B: public accessors for bridge
+public:
+    bool has_indirection() const { return !active_kv.empty() && active_kv_real_len > 0; }
+    int32_t get_active_kv_real_len() const { return active_kv_real_len; }
+    int32_t get_active_kv_phys(int32_t logical) const { return active_kv[logical]; }
+private:
+
     friend class llama_kv_cache_context;
 
     // TriAttention: raw K tensor access for scoring

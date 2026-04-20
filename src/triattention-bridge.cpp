@@ -60,6 +60,11 @@ int tria_get_used_n_kv(void * ctx_void) {
     auto * kv = get_kv(ctx_void);
     if (!kv) return 0;
 
+    // Phase 3B: return logical size when indirection active
+    if (kv->has_indirection()) {
+        return kv->get_active_kv_real_len();
+    }
+
     return (int) kv->get_used_n_kv();
 }
 
@@ -100,7 +105,9 @@ int tria_compact_kv(struct tria_runtime * rt, void * ctx_void) {
     auto * kv = get_kv(ctx_void);
     if (!kv) return 0;
 
-    const int n_kv = (int) kv->get_used_n_kv();
+    /* Phase 3B: when indirection is active, use logical size */
+    const bool has_indirection = kv->has_indirection();
+    const int n_kv = has_indirection ? kv->get_active_kv_real_len() : (int) kv->get_used_n_kv();
     const int n_old = n_kv - rt->window;
     if (n_old <= 0) {
         return 0;
@@ -156,17 +163,23 @@ int tria_compact_kv(struct tria_runtime * rt, void * ctx_void) {
 
     llama_synchronize(ctx);
 
-    /* Phase 3B: use indirection (active_kv) instead of physical compaction.
-     * Set active_kv to the keep_positions list — FA kernel reads through kv_indices.
-     * Evicted physical rows are freed via cells.rm() for reuse by find_slot().
-     * Fallback to physical compaction if TRIA_COMPACT=1 env is set. */
+    /* Phase 3B: indirection is currently broken for multi-round eviction
+     * (scoring reads K tensor by physical offset, but indirection makes
+     * logical != physical). Default to legacy compaction.
+     * Set TRIA_INDIRECTION=1 to test Phase 3B. */
     static int use_compact = -1;
     if (use_compact < 0) {
-        const char * env = getenv("TRIA_COMPACT");
-        use_compact = (env && env[0] == '1') ? 1 : 0;
+        const char * env = getenv("TRIA_INDIRECTION");
+        use_compact = (env && env[0] == '1') ? 0 : 1;
     }
 
     if (!use_compact) {
+        /* Phase 3B: translate logical keep indices to physical rows */
+        if (has_indirection) {
+            for (auto & pos : keep_positions) {
+                pos = (uint32_t)kv->get_active_kv_phys(pos);
+            }
+        }
         if (!kv->triattention_set_active(keep_positions)) {
             return 0;
         }

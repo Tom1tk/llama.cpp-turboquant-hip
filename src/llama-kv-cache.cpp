@@ -1409,6 +1409,20 @@ bool llama_kv_cache::get_cell_positions(std::vector<llama_pos> & positions) cons
     }
 
     const auto & cells = v_cells[0];
+
+    // Phase 3B: when indirection is active, iterate through active_kv
+    if (!active_kv.empty() && active_kv_real_len > 0) {
+        positions.resize(active_kv_real_len);
+        for (int i = 0; i < active_kv_real_len; ++i) {
+            uint32_t phys = (uint32_t)active_kv[i];
+            if (phys >= cells.size() || cells.is_empty(phys)) {
+                return false;
+            }
+            positions[i] = cells.pos_get(phys);
+        }
+        return true;
+    }
+
     const uint32_t used = cells.used_max_p1();
 
     positions.resize(used);

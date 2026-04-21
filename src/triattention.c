@@ -295,12 +295,17 @@ static void score_keys_single_head(
         float trig_mean = trig_sum / (float)TRIA_N_OFFSETS;
         float content = 0.0f;
         if (k_nonrot && hs->q_nonrot_mean && nonrot_dim > 0) {
+            static float nonrot_alpha = -1.0f;
+            if (nonrot_alpha < 0.0f) {
+                const char *env = getenv("TRIA_NONROT_ALPHA");
+                nonrot_alpha = env ? strtof(env, NULL) : sqrtf((float)(2 * fc) / (float)nonrot_dim);
+                fprintf(stderr, "tria: nonrot_alpha=%.3f\n", nonrot_alpha);
+            }
             const float *knr = k_nonrot + s * nonrot_dim;
             for (int d = 0; d < nonrot_dim; d++) {
                 content += hs->q_nonrot_mean[d] * knr[d];
             }
-            /* Scale: sqrt(rotary_dim / nonrot_dim) to balance with trig score */
-            content *= sqrtf((float)(2 * fc) / (float)nonrot_dim);
+            content *= nonrot_alpha;
         }
         out[s] = trig_mean + tria_max_beta * (trig_max - trig_mean) + extra + content;
     }

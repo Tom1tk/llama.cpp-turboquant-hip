@@ -623,7 +623,8 @@ scoring_done:
        and add lambda * v_z to global_scores (bidirectional).
        Only works with non-transposed V (flash_attn mode).         */
     {
-        const float lambda = 0.25f;
+        const char * vlam_env = getenv("TRIA_V_LAMBDA");
+        const float lambda = vlam_env ? strtof(vlam_env, NULL) : 0.25f;
         float * v_energy = (float *)calloc(n_old, sizeof(float));
         if (v_energy) {
             int v_layers = 0;

@@ -344,7 +344,9 @@ static __global__ void flash_attn_ext_vec(
                 KQ_k[j] = __half2half2(KQ[j*nthreads + k]);
             }
 
-            // Sparse V: skip V dequant if all attention weights for this position are negligible
+            // Sparse V: skip V dequant if all attention weights for this position are negligible.
+            // Disabled on HIP/RDNA — branch overhead exceeds dequant savings (benchmarked -3.4% on gfx1100).
+#ifndef GGML_USE_HIP
             {
                 constexpr float thr_f = 1e-6f;
                 const     half  thr_h = __float2half(thr_f);
@@ -355,6 +357,7 @@ static __global__ void flash_attn_ext_vec(
                 }
                 if (dominated) { continue; }
             }
+#endif
 
             const char * V_row = ggml_cuda_fattn_vec_kv_row(V, V_base, kv_indices, k_VKQ_0 + k, k, nb21);
 #pragma unroll
@@ -387,7 +390,9 @@ static __global__ void flash_attn_ext_vec(
                 KQ_k[j] = KQ[j*nthreads + k];
             }
 
-            // Sparse V: skip V dequant if all attention weights for this position are negligible
+            // Sparse V: skip V dequant if all attention weights for this position are negligible.
+            // Disabled on HIP/RDNA — branch overhead exceeds dequant savings (benchmarked -3.4% on gfx1100).
+#ifndef GGML_USE_HIP
             {
                 constexpr float thr_f = 1e-6f;
                 bool dominated = true;
@@ -397,6 +402,7 @@ static __global__ void flash_attn_ext_vec(
                 }
                 if (dominated) { continue; }
             }
+#endif
 
             const char * V_row = ggml_cuda_fattn_vec_kv_row(V, V_base, kv_indices, k_VKQ_0 + k, k, nb21);
 #pragma unroll

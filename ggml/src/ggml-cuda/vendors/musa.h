@@ -42,7 +42,6 @@
 #define cudaDeviceProp musaDeviceProp
 #define cudaDeviceSynchronize musaDeviceSynchronize
 #define cudaError_t musaError_t
-#define cudaErrorMemoryAllocation musaErrorMemoryAllocation
 #define cudaErrorPeerAccessAlreadyEnabled musaErrorPeerAccessAlreadyEnabled
 #define cudaErrorPeerAccessNotEnabled musaErrorPeerAccessNotEnabled
 #define cudaEventCreateWithFlags musaEventCreateWithFlags
@@ -75,6 +74,8 @@
 #define cudaMemcpyDeviceToHost musaMemcpyDeviceToHost
 #define cudaMemcpyHostToDevice musaMemcpyHostToDevice
 #define cudaMemcpyKind musaMemcpyKind
+#define cudaMemcpyToSymbol musaMemcpyToSymbol
+#define cudaMemcpyFromSymbol musaMemcpyFromSymbol
 #define cudaMemset musaMemset
 #define cudaMemsetAsync musaMemsetAsync
 #define cudaMemGetInfo musaMemGetInfo

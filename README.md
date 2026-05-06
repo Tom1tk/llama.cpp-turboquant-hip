@@ -1,12 +1,11 @@
-# llama.cpp — PFlash Fork (Speculative Prefill)
+# PFlash — Speculative Prefill for llama.cpp
 
 ![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+PFlash is a speculative prefill technique that compresses long prompts before the target model prefill. A small draft model (e.g. Qwen3.5-0.8B) runs ahead on CPU, scores prompt blocks by K-vector cosine similarity to the last position, then keeps only the most relevant blocks — discarding repetitive filler while preserving structural content via sink/recent anchors.
 
-**PFlash** is a speculative prefill technique that compresses long prompts before the target model prefill. A small draft model (e.g. Qwen3.5-0.8B) runs ahead, scores prompt blocks by K-vector similarity to the last position, then keeps only the most relevant blocks — discarding filler while preserving structure (system prompt, tool definitions, conversation history via sink/recent anchors).
+## Features
 
-**Features added to this fork:**
 - `--pflash-mode [off|auto|on]` — speculative prefill with three modes
 - `--pflash-keep-ratio` — fraction of tokens to keep (default 0.75, auto-mode uses 0.65)
 - `--pflash-sink` / `--pflash-recent` — always-preserve anchor tokens (default 2048/4096)
@@ -18,9 +17,9 @@
 - `PFLASH:` parseable log line with source/kept/draft/score/select/timing breakdown
 - Slot-level tracking in `llama-server` for per-request PFlash stats
 
-## Benchmark Results (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX)
+## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX)
 
-Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 tests. **The optimal keep ratio is 0.65 at all context sizes where PFlash provides net benefit.** Speedup grows with context:
+Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 tests. **The optimal keep ratio is 0.65 at all context sizes where PFlash is net-positive.** Speedup grows with context:
 
 | Context | Actual Tokens | Keep | Draft  | Prefill | Eff. TTFT | Baseline | Speedup |
 |---------|--------------|------|--------|---------|-----------|----------|---------|
@@ -32,10 +31,10 @@ Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 te
 | 100k    | 67,526       | 65%  | 27.1s  | 69.9s   | 97.0s     | 126.3s   | +23%    |
 
 **Key findings:**
-- Below ~14k actual tokens (~20k requested) the draft overhead exceeds prefill savings — PFlash auto-disables at this threshold.
-- The draft model scales linearly with token count (~0.38× tokens in wall time on CPU).
-- NIAH quality passes at all context sizes with keep ≥ 65%, except at 20k where the fixed sink/recent anchors consume too much of the keep budget, requiring 85%.
-- The per-decode speed improves ~10% at 65% keep due to smaller KV cache.
+- Below ~14k actual tokens (~20k requested) the draft overhead exceeds prefill savings — PFlash auto-disables.
+- The draft model scales linearly (~0.38× token count on CPU).
+- NIAH quality passes at all sizes with keep ≥ 65%, except at 20k where anchors consume too much of the budget (need 85%).
+- Per-decode speed improves ~10% at 65% keep due to smaller KV cache.
 
 **Usage:**
 ```sh
@@ -45,6 +44,40 @@ llama-server \
   --pflash-mode auto \
   --pflash-window 4096
 ```
+
+## Roadmap
+
+**Phase 0 — NIAH harness + baseline** ✓
+Fork domvox, add NIAH benchmark binary, measure baseline TTFT at 8k–128k.
+
+**Phase 1 — CPU scoring MVP** ✓
+Download Qwen3-0.6B-Q8_0 as drafter. Implement `pflash_score()` (mean-K cosine similarity per block), `pflash_select()` (sink + recent + greedy blocks), and `pflash_compress()` pipeline. Test at 8k–16k. NIAH passing.
+
+**Phase 2 — Bulk K cache read** ✓
+Replace per-position `ggml_backend_tensor_get` calls with a single batch read for all positions, reducing cache read overhead.
+
+**Phase 3 — Chunked sliding window** ✓
+Replace full-prompt drafter forward with chunked windows (default 4096 tokens). Process prompt in windows, aggregate scores across windows.
+
+**Phase 4 — Server integration** ✓
+Wire into `llama-server` as `--pflash-mode auto/on/off`, `--pflash-keep-ratio`, `--pflash-threshold`, `--pflash-window`. Works end-to-end with tool-calling workloads.
+
+**Phase 5 — BSA HIP port** (deferred, unlocks 128k+)
+Port `mit-han-lab/Block-Sparse-Attention` CUDA kernels to HIP. Wave32 vs warp32 differences, different shared memory layout assumptions. Exit: drafter forward using BSA HIP kernels, 128k context validated.
+
+---
+
+# llama.cpp
+
+![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp)](https://github.com/ggml-org/llama.cpp/releases)
+[![Server](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
+
+[Manifesto](https://github.com/ggml-org/llama.cpp/discussions/205) / [ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md)
+
+LLM inference in C/C++
 
 ## Recent API changes
 

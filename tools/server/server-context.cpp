@@ -7,6 +7,7 @@
 #include "common.h"
 #include "llama.h"
 #include "log.h"
+#include "pflash.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "mtmd.h"
@@ -75,6 +76,9 @@ struct server_slot {
 
     int32_t n_prompt_tokens_cache     = 0;
     int32_t n_prompt_tokens_processed = 0;
+
+    // PFlash compressed tokens (replaces task->tokens when set)
+    std::vector<llama_token> pflash_tokens;
 
     size_t last_nl_pos = 0;
 
@@ -183,9 +187,10 @@ struct server_slot {
         generated_token_probs.clear();
         json_schema = json();
 
-        // clear speculative decoding stats
+        // clear speculative decoding and PFlash stats
         n_draft_total = 0;
         n_draft_accepted = 0;
+        pflash_tokens.clear();
 
         task_prev = std::move(task);
         task.reset();
@@ -2237,6 +2242,38 @@ private:
                         slot.t_start_generation = 0;
 
                         slot.state = SLOT_STATE_PROCESSING_PROMPT;
+
+                        // PFlash compression: compress prompt tokens if enabled
+                        if (ctx_pflash_draft && params_base.speculative.pflash_mode > 0 && !slot.task->tokens.empty()) {
+                            std::vector<llama_token> raw_tokens;
+                            raw_tokens.reserve(input_tokens.size());
+                            for (size_t i = 0; i < input_tokens.size(); i++) {
+                                raw_tokens.push_back(input_tokens[i]);
+                            }
+                            pflash_params pparams;
+                            pparams.keep_ratio = params_base.speculative.pflash_keep_ratio;
+                            pparams.threshold_tokens = params_base.speculative.pflash_threshold;
+                            pparams.block_size = params_base.speculative.pflash_block_size;
+                            pparams.sink_tokens = params_base.speculative.pflash_sink_tokens;
+                            pparams.recent_tokens = params_base.speculative.pflash_recent_tokens;
+                            pparams.window_size = params_base.speculative.pflash_window_size;
+                            pparams.score_layer = -1;
+
+                            auto pfr = pflash_compress(ctx_pflash_draft, raw_tokens, pparams);
+                            if (!pfr.bypassed && !pfr.tokens.empty()) {
+                                SLT_INF(slot, "PFlash: %d -> %zu tokens (%.1f%% kept, draft %lldms)\n",
+                                        (int)raw_tokens.size(), pfr.tokens.size(),
+                                        100.0 * pfr.tokens.size() / raw_tokens.size(),
+                                        (long long)(pfr.draft_us / 1000));
+                                // Replace slot task tokens with compressed tokens
+                                auto & mutable_tokens = const_cast<server_tokens&>(slot.task->tokens);
+                                mutable_tokens = server_tokens(
+                                    llama_tokens(pfr.tokens.begin(), pfr.tokens.end()), false);
+                            } else {
+                                SLT_DBG(slot, "PFlash: bypassed (%d tokens, threshold %d)\n",
+                                        (int)raw_tokens.size(), pparams.threshold_tokens);
+                            }
+                        }
 
                         SLT_INF(slot, "new prompt, n_ctx_slot = %d, n_keep = %d, task.n_tokens = %d\n",
                                 slot.n_ctx, slot.task->params.n_keep, slot.task->n_tokens());

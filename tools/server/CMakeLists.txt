@@ -15,6 +15,8 @@ add_library(${TARGET} STATIC
     server-context.h
     server-tools.cpp
     server-tools.h
+    ${CMAKE_SOURCE_DIR}/tools/niah/pflash.cpp
+    ${CMAKE_SOURCE_DIR}/include/pflash.h
 )
 
 if (BUILD_SHARED_LIBS)

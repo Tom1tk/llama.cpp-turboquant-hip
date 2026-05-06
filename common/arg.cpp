@@ -3615,7 +3615,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_PFLASH_MODE"));
     add_opt(common_arg(
         {"--pflash-keep-ratio"}, "F",
-        "Fraction of tokens to keep during PFlash compression (default: 0.05)",
+        "Fraction of tokens to keep during PFlash compression (default: 0.50)",
         [](common_params & params, const std::string & value) {
             params.speculative.pflash_keep_ratio = std::stof(value);
         }

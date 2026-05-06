@@ -2248,7 +2248,7 @@ private:
                         // to prevent infinite generation if compressed prompts break EOS.
                         if (ctx_pflash_draft && params_base.speculative.pflash_mode > 0 && !slot.task->tokens.empty()) {
                             if (slot.task->params.n_predict == -1) {
-                                const_cast<server_task&>(*slot.task).params.n_predict = 512;
+                                const_cast<server_task&>(*slot.task).params.n_predict = 2048;
                             }
                             std::vector<llama_token> raw_tokens;
                             raw_tokens.reserve(input_tokens.size());

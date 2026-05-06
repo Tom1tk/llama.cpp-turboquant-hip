@@ -354,13 +354,14 @@ struct common_params_speculative {
     std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
 
     // PFlash speculative prefill parameters
-    int32_t pflash_mode = 0;           // 0=off, 1=auto, 2=on
-    float   pflash_keep_ratio = 0.75f; // fraction of tokens to keep (0.75=75% for tool calling)
-    int32_t pflash_threshold = 8192;   // min tokens to apply PFlash (auto mode)
-    int32_t pflash_block_size = 128;   // scoring block size
-    int32_t pflash_sink_tokens = 2048; // always-keep prefix tokens (preserves system prompt + tools)
-    int32_t pflash_recent_tokens = 4096; // always-keep suffix tokens (preserves user message + history)
-    int32_t pflash_window_size = 4096; // chunk window size
+    int32_t pflash_mode = 0;             // 0=off, 1=auto, 2=on
+    float   pflash_keep_ratio = 0.75f;   // fraction of tokens to keep
+    int32_t pflash_threshold = 8192;     // min tokens to apply PFlash
+    int32_t pflash_block_size = 128;     // scoring block granularity
+    int32_t pflash_sink_tokens = 2048;   // always-keep prefix tokens
+    int32_t pflash_recent_tokens = 4096; // always-keep suffix tokens
+    int32_t pflash_window_size = 4096;   // chunk window size for drafter forward
+    int32_t pflash_score_layer = -1;     // scoring layer index (-1 = auto)
 
     bool has_dft() const {
         return !mparams_dft.path.empty() || !mparams_dft.hf_repo.empty();

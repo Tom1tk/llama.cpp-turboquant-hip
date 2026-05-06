@@ -10,17 +10,17 @@ struct pflash_params {
     // Path to the draft model (small GGUF)
     std::string draft_model_path;
 
-    // Fraction of tokens to keep (default: 0.05 = 5%)
-    float keep_ratio = 0.05f;
+    // Fraction of tokens to keep
+    float keep_ratio = 0.75f;
 
     // Minimum number of tokens to always keep
     int32_t min_keep_tokens = 2048;
 
     // Number of prefix tokens to always keep (sink tokens)
-    int32_t sink_tokens = 256;
+    int32_t sink_tokens = 2048;
 
     // Number of suffix tokens to always keep (recent tokens)
-    int32_t recent_tokens = 1024;
+    int32_t recent_tokens = 4096;
 
     // Scoring block size
     int32_t block_size = 128;
@@ -63,15 +63,6 @@ struct llama_context * pflash_init_draft(
     int32_t n_ctx,
     const std::string & cache_type_k,
     const std::string & cache_type_v);
-
-// Run the draft model over the prompt to compute per-block importance scores
-// The draft context must have been populated with the prompt tokens first
-// Returns a vector of scores, one per block (higher = more important)
-std::vector<float> pflash_score(
-    struct llama_context * draft_ctx,
-    const std::vector<llama_token> & tokens,
-    int32_t score_layer,
-    int32_t block_size);
 
 // Select which spans to keep based on scores and configuration
 std::vector<pflash_span> pflash_select(

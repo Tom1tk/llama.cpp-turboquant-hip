@@ -355,7 +355,7 @@ struct common_params_speculative {
 
     // PFlash speculative prefill parameters
     int32_t pflash_mode = 0;           // 0=off, 1=auto, 2=on
-    float   pflash_keep_ratio = 0.50f; // fraction of tokens to keep (0.50=50% for chat)
+    float   pflash_keep_ratio = 0.75f; // fraction of tokens to keep (0.75=75% for tool calling)
     int32_t pflash_threshold = 8192;   // min tokens to apply PFlash (auto mode)
     int32_t pflash_block_size = 128;   // scoring block size
     int32_t pflash_sink_tokens = 2048; // always-keep prefix tokens (preserves system prompt + tools)

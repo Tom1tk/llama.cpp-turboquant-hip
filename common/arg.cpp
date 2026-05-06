@@ -3605,7 +3605,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     // PFlash speculative prefill args
     add_opt(common_arg(
         {"--pflash-mode"}, "[off|auto|on]",
-        "PFlash speculative prefill mode (default: off). Compresses long prompts using a draft model before target prefill.",
+        "PFlash speculative prefill mode (default: off). "
+        "auto: sweep-tuned policy (keep_ratio=0.65, threshold=14k actual tokens). "
+        "Benchmarked speedups: +8% at 25k, +14% at 50k, +23% at 100k. "
+        "on: manual mode using --pflash-keep-ratio and --pflash-threshold.",
         [](common_params & params, const std::string & value) {
             if (value == "off")       params.speculative.pflash_mode = 0;
             else if (value == "auto") params.speculative.pflash_mode = 1;

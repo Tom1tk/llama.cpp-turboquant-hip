@@ -2189,7 +2189,10 @@ int32_t llama_kv_cache::read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t 
     if ((size_t)ikv >= layers.size()) return 0;
 
     auto & layer = layers[ikv];
-    auto * k = layer.k;  // [n_embd_k_gqa, kv_size, n_stream]
+    // Use the per-stream 2D view (consistent with state_write_data) instead
+    // of the 3D storage tensor, to avoid stride issues in tensor_get
+    auto * k = layer.k_stream.empty() ? nullptr : layer.k_stream[0];
+    if (!k) return 0;
 
     // Find the cell index for this position
     uint32_t cell_idx = (uint32_t)-1;

@@ -26,6 +26,7 @@ struct llama_context * pflash_init_draft(
     cparams.n_ctx = n_ctx;
     cparams.n_batch = 2048;
     cparams.n_ubatch = 512;
+    cparams.offload_kqv = false;
 
     if (cache_type_k == "q8_0") {
         cparams.type_k = GGML_TYPE_Q8_0;
@@ -61,46 +62,54 @@ std::vector<float> pflash_score(
     const int32_t n_tokens = (int32_t)tokens.size();
     if (n_tokens == 0) return {};
 
-    // Auto-select scoring layer: use layer 0 (shallowest)
+    const int32_t n_layer = (int32_t)llama_model_n_layer(llama_get_model(draft_ctx));
+
+    // Auto-select scoring layer: probe layers to find the first one with K cache data
+    // (DeltaNet layers are filtered from the KV cache and return 0 from read_k_data)
     if (score_layer < 0) {
+        score_layer = 0;
+        // Use a large probe buffer to safely determine the actual K cache dimension
+        // Qwen3.5 models have key_length != embedding_length / head_count,
+        // so we can't calculate the dimension from model metadata
+        std::vector<float> probe_buf(16384);
+        for (int32_t il = 0; il < std::min(n_layer, 32); il++) {
+            int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, il, 0, 0, probe_buf.data());
+            if (n_read > 0) {
+                score_layer = il;
+                break;
+            }
+        }
+        LOG_INF("pflash: auto-selected scoring layer %d", score_layer);
+    }
+
+    if (score_layer >= n_layer) {
+        LOG_WRN("pflash: score_layer %d >= n_layer %d, using 0", score_layer, n_layer);
         score_layer = 0;
     }
 
     const int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
     std::vector<float> scores(n_blocks, 0.0f);
 
-    // Read K cache for a specific position
-    // Returns n_kv_heads * head_dim floats, or 0 on failure
-    // Read K values for each position in the prompt
-    // We need: n_tokens positions, each with n_kv_heads * head_dim values
-    const int32_t n_layer = (int32_t)llama_model_n_layer(llama_get_model(draft_ctx));
-    if (score_layer >= n_layer) {
-        LOG_WRN("pflash: score_layer %d >= n_layer %d, using 0", score_layer, n_layer);
-        score_layer = 0;
+    // Probe a single position to get the actual K cache dimension per row
+    // (Qwen3.5 models have separate key_length != embedding_length / head_count)
+    std::vector<float> k_buf(16384);
+    int32_t kv_dim = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, 0, 0, k_buf.data());
+    if (kv_dim <= 0) {
+        LOG_ERR("pflash: failed to read K cache at pos 0 layer %d", score_layer);
+        return {};
     }
-
-    // Determine the head dimension and kv head count from the model
-    const int32_t n_head = (int32_t)llama_model_n_head(llama_get_model(draft_ctx));
-    const int32_t n_embd = (int32_t)llama_model_n_embd(llama_get_model(draft_ctx));
-    const int32_t n_kv_heads = (int32_t)llama_model_n_head_kv(llama_get_model(draft_ctx));
-    const int32_t head_dim = n_embd / n_head;
-
-    const int32_t kv_dim = n_kv_heads * head_dim;
-
-    // Allocate buffer for one position's K values
-    std::vector<float> k_buf(kv_dim);
+    k_buf.resize(kv_dim);
 
     // For each position, read K from cache
-    // Cache KV data per position so we don't repeatedly read the same positions
-    std::vector<std::vector<float>> all_k(n_tokens, std::vector<float>(kv_dim));
-
+    std::vector<std::vector<float>> all_k;
+    all_k.reserve(n_tokens);
     for (int32_t pos = 0; pos < n_tokens; pos++) {
         int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, k_buf.data());
-        if (n_read <= 0) {
-            LOG_ERR("pflash: failed to read K cache at pos %d layer %d", pos, score_layer);
+        if (n_read != kv_dim) {
+            LOG_ERR("pflash: unexpected K cache dim at pos %d: %d != %d", pos, n_read, kv_dim);
             return {};
         }
-        memcpy(all_k[pos].data(), k_buf.data(), kv_dim * sizeof(float));
+        all_k.push_back(k_buf);
     }
 
     // Get the last position's K vector for reference

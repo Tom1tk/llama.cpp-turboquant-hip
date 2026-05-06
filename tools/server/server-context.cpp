@@ -2243,8 +2243,13 @@ private:
 
                         slot.state = SLOT_STATE_PROCESSING_PROMPT;
 
-                        // PFlash compression: compress prompt tokens if enabled
+                        // PFlash compression: compress prompt tokens if enabled.
+                        // When PFlash is active, set a default n_predict safety net
+                        // to prevent infinite generation if compressed prompts break EOS.
                         if (ctx_pflash_draft && params_base.speculative.pflash_mode > 0 && !slot.task->tokens.empty()) {
+                            if (slot.task->params.n_predict == -1) {
+                                const_cast<server_task&>(*slot.task).params.n_predict = 512;
+                            }
                             std::vector<llama_token> raw_tokens;
                             raw_tokens.reserve(input_tokens.size());
                             for (size_t i = 0; i < input_tokens.size(); i++) {
@@ -2682,6 +2687,8 @@ private:
 
                     // entire prompt has been processed
                     if (slot.prompt.n_tokens() == slot.task->n_tokens()) {
+                        SLT_INF(slot, "prompt done: prompt.n_tokens=%d task.n_tokens=%d\n",
+                                slot.prompt.n_tokens(), slot.task->n_tokens());
                         slot.state = SLOT_STATE_DONE_PROMPT;
 
                         GGML_ASSERT(batch.n_tokens > 0);
@@ -2933,6 +2940,8 @@ private:
 
                     // prompt evaluated for next-token prediction
                     slot.state = SLOT_STATE_GENERATING;
+                    SLT_INF(slot, "now generating, n_decoded=%d prompt.n_tokens=%d\n",
+                            slot.n_decoded, slot.prompt.n_tokens());
 
                     if (slot.can_speculate()) {
                         common_speculative_begin(slot.spec, slot.prompt.tokens.get_text_tokens());

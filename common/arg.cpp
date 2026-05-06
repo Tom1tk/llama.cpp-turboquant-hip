@@ -3602,6 +3602,39 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V_DRAFT"));
 
+    // PFlash speculative prefill args
+    add_opt(common_arg(
+        {"--pflash-mode"}, "[off|auto|on]",
+        "PFlash speculative prefill mode (default: off). Compresses long prompts using a draft model before target prefill.",
+        [](common_params & params, const std::string & value) {
+            if (value == "off")       params.speculative.pflash_mode = 0;
+            else if (value == "auto") params.speculative.pflash_mode = 1;
+            else if (value == "on")   params.speculative.pflash_mode = 2;
+            else throw std::invalid_argument("unknown pflash mode. expected off|auto|on");
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_PFLASH_MODE"));
+    add_opt(common_arg(
+        {"--pflash-keep-ratio"}, "F",
+        "Fraction of tokens to keep during PFlash compression (default: 0.05)",
+        [](common_params & params, const std::string & value) {
+            params.speculative.pflash_keep_ratio = std::stof(value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_KEEP_RATIO"));
+    add_opt(common_arg(
+        {"--pflash-threshold"}, "N",
+        "Minimum tokens to trigger PFlash in auto mode (default: 8192)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_threshold = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_THRESHOLD"));
+    add_opt(common_arg(
+        {"--pflash-window"}, "N",
+        "Chunk window size for PFlash drafter (default: 4096, 0=full prompt)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_window_size = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_WINDOW"));
+
     add_opt(common_arg(
         {"-mv", "--model-vocoder"}, "FNAME",
         "vocoder model for audio generation (default: unused)",

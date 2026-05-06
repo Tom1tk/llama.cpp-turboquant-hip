@@ -562,6 +562,7 @@ private:
     llama_batch batch {};
 
     llama_model_ptr model_dft;
+    llama_context * ctx_pflash_draft = nullptr;
 
     bool add_bos_token = true;
 
@@ -592,6 +593,15 @@ private:
         llama_init.reset();
         ctx = nullptr;
         model = nullptr;
+
+        if (ctx_pflash_draft) {
+            const auto * dm = llama_get_model(ctx_pflash_draft);
+            llama_free(ctx_pflash_draft);
+            ctx_pflash_draft = nullptr;
+            if (dm && !model_dft) {
+                llama_model_free(const_cast<llama_model *>(dm));
+            }
+        }
 
         mtmd_free(mctx);
         mctx = nullptr;
@@ -688,6 +698,43 @@ private:
 
             params_base.speculative.model_dft = model_dft.get();
             params_base.speculative.cparams_dft = common_context_params_to_llama(params_dft);
+        }
+
+        // Initialize PFlash if enabled and a draft model is available
+        if (params.speculative.pflash_mode > 0) {
+            const auto & pspec = params.speculative;
+            if (pspec.has_dft() || model_dft) {
+                SRV_INF("initializing PFlash drafter (mode=%d, keep_ratio=%.2f, threshold=%d)\n",
+                        params.speculative.pflash_mode, params.speculative.pflash_keep_ratio, params.speculative.pflash_threshold);
+                auto cparams = llama_context_default_params();
+                cparams.n_ctx = n_ctx;
+                cparams.n_batch = 2048;
+                cparams.n_ubatch = 512;
+                cparams.offload_kqv = false;
+                cparams.type_k = pspec.cache_type_k;
+                cparams.type_v = pspec.cache_type_v;
+
+                // Use the draft model already loaded, or load from path
+                llama_model * draft_model = model_dft.get();
+                if (!draft_model && pspec.has_dft()) {
+                    auto mparams = llama_model_default_params();
+                    mparams.n_gpu_layers = 0;
+                    draft_model = llama_model_load_from_file(pspec.mparams_dft.path.c_str(), mparams);
+                    if (draft_model) {
+                        model_dft.reset(draft_model);
+                    }
+                }
+                if (draft_model) {
+                    ctx_pflash_draft = llama_init_from_model(draft_model, cparams);
+                    if (!ctx_pflash_draft) {
+                        SRV_WRN("%s", "failed to create PFlash drafter context, disabling\n");
+                    } else {
+                        SRV_INF("%s", "PFlash drafter context created\n");
+                    }
+                }
+            } else {
+                SRV_WRN("%s", "PFlash enabled but no draft model loaded, disabling\n");
+            }
         }
 
         std::string & mmproj_path = params_base.mmproj.path;

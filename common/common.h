@@ -353,6 +353,15 @@ struct common_params_speculative {
     std::vector<std::pair<std::string, std::string>> replacements; // main to speculative model replacements
     std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
 
+    // PFlash speculative prefill parameters
+    int32_t pflash_mode = 0;           // 0=off, 1=auto, 2=on
+    float   pflash_keep_ratio = 0.05f; // fraction of tokens to keep
+    int32_t pflash_threshold = 8192;   // min tokens to apply PFlash (auto mode)
+    int32_t pflash_block_size = 128;   // scoring block size
+    int32_t pflash_sink_tokens = 256;  // always-keep prefix tokens
+    int32_t pflash_recent_tokens = 1024; // always-keep suffix tokens
+    int32_t pflash_window_size = 4096; // chunk window size
+
     bool has_dft() const {
         return !mparams_dft.path.empty() || !mparams_dft.hf_repo.empty();
     }

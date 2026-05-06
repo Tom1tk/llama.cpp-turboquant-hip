@@ -491,5 +491,13 @@ pflash_result pflash_compress(
         return res;
     }
 
+    fprintf(stderr,
+            "PFLASH: source=%d kept=%d ratio=%.1f%% draft=%dms score=%dms select=%dms gather=%dms total=%dms\n",
+            res.source_count, res.kept_count,
+            100.0f * res.kept_count / res.source_count,
+            (int)(res.draft_us / 1000), (int)(res.score_us / 1000),
+            (int)(res.select_us / 1000), (int)(res.gather_us / 1000),
+            (int)((res.draft_us + res.score_us + res.select_us + res.gather_us) / 1000));
+
     return res;
 }

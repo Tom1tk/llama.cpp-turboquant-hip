@@ -53,6 +53,57 @@ struct llama_context * pflash_init_draft(
     return ctx;
 }
 
+// Internal: read K values for all positions from the drafter's KV cache
+// after the drafter forward pass has been run on the complete prompt.
+// Returns all_k flattened as [n_tokens][kv_dim], or empty on failure.
+static std::vector<float> pflash_read_all_k(
+    struct llama_context * draft_ctx,
+    int32_t score_layer,
+    int32_t n_tokens)
+{
+    std::vector<float> probe_buf(16384);
+    int32_t kv_dim = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, 0, 0, probe_buf.data());
+    if (kv_dim <= 0) return {};
+
+    std::vector<float> all_k((size_t)n_tokens * kv_dim);
+    for (int32_t pos = 0; pos < n_tokens; pos++) {
+        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
+        if (n_read != kv_dim) return {};
+    }
+    return all_k;
+}
+
+// Internal: run drafter forward on a single chunk of tokens and read K values.
+// Concatenates K values into the flat all_k array starting at global_offset.
+static bool pflash_process_window(
+    struct llama_context * draft_ctx,
+    const std::vector<llama_token> & tokens,
+    int32_t token_offset,
+    int32_t n_window,
+    int32_t score_layer,
+    int32_t kv_dim,
+    std::vector<float> & all_k)
+{
+    llama_memory_clear(llama_get_memory(draft_ctx), true);
+    llama_synchronize(draft_ctx);
+
+    int32_t n_batch = 2048;
+    int32_t end = std::min(token_offset + n_window, (int32_t)tokens.size());
+    for (int32_t i = token_offset; i < end; i += n_batch) {
+        int32_t n = std::min(end - i, n_batch);
+        auto batch = llama_batch_get_one(const_cast<llama_token *>(&tokens[i]), n);
+        if (llama_decode(draft_ctx, batch) != 0) return false;
+    }
+    llama_synchronize(draft_ctx);
+
+    for (int32_t pos = 0; pos < n_window && token_offset + pos < (int32_t)tokens.size(); pos++) {
+        int32_t global_pos = token_offset + pos;
+        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)global_pos * kv_dim]);
+        if (n_read != kv_dim) return false;
+    }
+    return true;
+}
+
 std::vector<float> pflash_score(
     struct llama_context * draft_ctx,
     const std::vector<llama_token> & tokens,
@@ -63,7 +114,6 @@ std::vector<float> pflash_score(
     if (n_tokens == 0) return {};
 
     const int32_t n_layer = (int32_t)llama_model_n_layer(llama_get_model(draft_ctx));
-
     // Auto-select scoring layer: probe layers to find the first one with K cache data
     // (DeltaNet layers are filtered from the KV cache and return 0 from read_k_data)
     if (score_layer < 0) {
@@ -87,66 +137,43 @@ std::vector<float> pflash_score(
         score_layer = 0;
     }
 
-    const int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
-    std::vector<float> scores(n_blocks, 0.0f);
-
-    // Probe a single position to get the actual K cache dimension per row
-    // (Qwen3.5 models have separate key_length != embedding_length / head_count)
-    std::vector<float> k_buf(16384);
-    int32_t kv_dim = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, 0, 0, k_buf.data());
-    if (kv_dim <= 0) {
-        LOG_ERR("pflash: failed to read K cache at pos 0 layer %d", score_layer);
+    // Read K values for all positions (after drafter forward pass)
+    auto all_k = pflash_read_all_k(draft_ctx, score_layer, n_tokens);
+    if (all_k.empty()) {
+        LOG_ERR("pflash: failed to read K cache at layer %d", score_layer);
         return {};
     }
-    k_buf.resize(kv_dim);
+    int32_t kv_dim = (int32_t)(all_k.size() / n_tokens);
 
-    // For each position, read K from cache
-    std::vector<std::vector<float>> all_k;
-    all_k.reserve(n_tokens);
-    for (int32_t pos = 0; pos < n_tokens; pos++) {
-        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, k_buf.data());
-        if (n_read != kv_dim) {
-            LOG_ERR("pflash: unexpected K cache dim at pos %d: %d != %d", pos, n_read, kv_dim);
-            return {};
-        }
-        all_k.push_back(k_buf);
-    }
+    // Score: for each block, compute mean K and cosine similarity to last K
+    const int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
+    std::vector<float> scores(n_blocks);
 
-    // Get the last position's K vector for reference
-    const std::vector<float> & last_k = all_k[n_tokens - 1];
+    const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
     float last_len = 0.0f;
-    for (int32_t i = 0; i < kv_dim; i++) {
-        last_len += last_k[i] * last_k[i];
-    }
+    for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
     last_len = std::sqrt(std::max(last_len, 1e-12f));
 
-    // For each block, compute mean K and cosine similarity to last K
+    std::vector<double> mean_k_buf(kv_dim);
     for (int32_t b = 0; b < n_blocks; b++) {
         int32_t start = b * block_size;
         int32_t end = std::min(start + block_size, n_tokens);
-
-        // Compute mean K for this block
-        std::vector<float> mean_k(kv_dim, 0.0f);
         int32_t block_len = end - start;
+
+        std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
         for (int32_t p = start; p < end; p++) {
-            const auto & k = all_k[p];
-            for (int32_t i = 0; i < kv_dim; i++) {
-                mean_k[i] += k[i];
-            }
+            const float * kp = &all_k[(size_t)p * kv_dim];
+            for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] += kp[i];
         }
         float inv_len = 1.0f / (float)block_len;
-        for (int32_t i = 0; i < kv_dim; i++) {
-            mean_k[i] *= inv_len;
-        }
+        for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] *= inv_len;
 
-        // Cosine similarity: dot(mean_k, last_k) / (||mean_k|| * ||last_k||)
         float dot = 0.0f, mean_len = 0.0f;
         for (int32_t i = 0; i < kv_dim; i++) {
-            dot += mean_k[i] * last_k[i];
-            mean_len += mean_k[i] * mean_k[i];
+            dot += (float)mean_k_buf[i] * last_k[i];
+            mean_len += (float)(mean_k_buf[i] * mean_k_buf[i]);
         }
         mean_len = std::sqrt(std::max(mean_len, 1e-12f));
-
         scores[b] = dot / (mean_len * last_len);
     }
 
@@ -338,45 +365,118 @@ pflash_result pflash_compress(
         return res;
     }
 
-    // Step 1: Run draft model on the full prompt
+    // Step 1: Run first window through drafter to populate KV cache for probing
     int64_t t0 = ggml_time_us();
+    int32_t n_tokens = (int32_t)tokens.size();
+    int32_t win = params.window_size > 0 ? std::min(params.window_size, n_tokens) : n_tokens;
+    int32_t probe_n = std::min(win, n_tokens);
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
-
     int32_t n_batch = 2048;
-    for (int32_t i = 0; i < (int32_t)tokens.size(); i += n_batch) {
-        int32_t n = std::min((int32_t)tokens.size() - i, n_batch);
+    for (int32_t i = 0; i < probe_n; i += n_batch) {
+        int32_t n = std::min(probe_n - i, n_batch);
         auto batch = llama_batch_get_one(const_cast<llama_token *>(&tokens[i]), n);
         if (llama_decode(draft_ctx, batch) != 0) {
             LOG_ERR("pflash: draft decode failed at position %d", i);
-            res.bypassed = true;
-            res.tokens = tokens;
-            return res;
+            res.bypassed = true; res.tokens = tokens; return res;
         }
     }
     llama_synchronize(draft_ctx);
+
+    // Step 2: Auto-select scoring layer from populated KV cache
+    int32_t score_layer = params.score_layer;
+    if (score_layer < 0) {
+        score_layer = 0;
+        const int32_t n_layer = (int32_t)llama_model_n_layer(llama_get_model(draft_ctx));
+        std::vector<float> probe_buf(16384);
+        for (int32_t il = 0; il < std::min(n_layer, 32); il++) {
+            int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, il, 0, 0, probe_buf.data());
+            if (n_read > 0) { score_layer = il; break; }
+        }
+        LOG_INF("pflash: auto-selected scoring layer %d", score_layer);
+    }
+
+    // Step 3: Determine K cache dimension
+    std::vector<float> kv_probe(16384);
+    int32_t kv_dim = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, 0, 0, kv_probe.data());
+    if (kv_dim <= 0) {
+        LOG_ERR("pflash: failed to read K cache at layer %d", score_layer);
+        res.bypassed = true; res.tokens = tokens; return res;
+    }
+
+    // Step 4: Process all tokens in windows
+    std::vector<float> all_k((size_t)n_tokens * kv_dim);
+
+    // Read K values from first window (already processed above)
+    for (int32_t pos = 0; pos < probe_n; pos++) {
+        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
+        if (n_read != kv_dim) {
+            LOG_ERR("pflash: K cache read failed at pos %d", pos);
+            res.bypassed = true; res.tokens = tokens; return res;
+        }
+    }
+
+    // Process remaining windows
+    if (params.window_size > 0 && n_tokens > params.window_size) {
+        for (int32_t offset = win; offset < n_tokens; offset += win) {
+            int32_t n_win = std::min(win, n_tokens - offset);
+            if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k)) {
+                LOG_ERR("pflash: window at %d failed", offset);
+                res.bypassed = true; res.tokens = tokens; return res;
+            }
+        }
+    } else if (n_tokens > probe_n) {
+        // Full prompt without chunking: read remaining positions
+        for (int32_t pos = probe_n; pos < n_tokens; pos++) {
+            int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
+            if (n_read != kv_dim) {
+                LOG_ERR("pflash: K cache read failed at pos %d", pos);
+                res.bypassed = true; res.tokens = tokens; return res;
+            }
+        }
+    }
     res.draft_us = ggml_time_us() - t0;
 
-    // Step 2: Score blocks
+    // Step 4: Score blocks (on all_k, no more drafter access needed)
     t0 = ggml_time_us();
-    auto scores = pflash_score(draft_ctx, tokens, params.score_layer, params.block_size);
-    if (scores.empty()) {
-        LOG_ERR("pflash: scoring failed, bypassing");
-        res.bypassed = true;
-        res.tokens = tokens;
-        return res;
+    const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
+    float last_len = 0.0f;
+    for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
+    last_len = std::sqrt(std::max(last_len, 1e-12f));
+
+    const int32_t n_blocks = (n_tokens + params.block_size - 1) / params.block_size;
+    std::vector<float> scores(n_blocks);
+    std::vector<double> mean_k_buf(kv_dim);
+
+    for (int32_t b = 0; b < n_blocks; b++) {
+        int32_t start = b * params.block_size;
+        int32_t end = std::min(start + params.block_size, n_tokens);
+        std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
+        for (int32_t p = start; p < end; p++) {
+            const float * kp = &all_k[(size_t)p * kv_dim];
+            for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] += kp[i];
+        }
+        float inv_len = 1.0f / (float)(end - start);
+        for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] *= inv_len;
+
+        float dot = 0.0f, ml = 0.0f;
+        for (int32_t i = 0; i < kv_dim; i++) {
+            dot += (float)mean_k_buf[i] * last_k[i];
+            ml += (float)(mean_k_buf[i] * mean_k_buf[i]);
+        }
+        scores[b] = dot / (std::sqrt(std::max(ml, 1e-12f)) * last_len);
     }
     res.score_us = ggml_time_us() - t0;
 
-    // Step 3: Select spans
+    // Step 5: Select spans
     t0 = ggml_time_us();
     auto spans = pflash_select(
-        scores, params.block_size, (int32_t)tokens.size(),
+        scores, params.block_size, n_tokens,
         params.sink_tokens, params.recent_tokens,
         params.keep_ratio, params.min_keep_tokens);
     res.select_us = ggml_time_us() - t0;
 
-    // Step 4: Gather tokens
+    // Step 6: Gather tokens
     t0 = ggml_time_us();
     res.tokens = pflash_gather(tokens, spans);
     res.gather_us = ggml_time_us() - t0;

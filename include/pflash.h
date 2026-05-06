@@ -34,6 +34,9 @@ struct pflash_params {
     // KV cache types for the drafter
     std::string draft_cache_type_k = "f16";
     std::string draft_cache_type_v = "f16";
+
+    // Chunked window size for Phases 2-3 (0 = disabled, process full prompt)
+    int32_t window_size = 4096;
 };
 
 struct pflash_span {

@@ -92,6 +92,14 @@ public:
         return used.empty() ? 0 : *used.rbegin() + 1;
     }
 
+    llama_pos get_pos(uint32_t i) const {
+        return pos[i];
+    }
+
+    bool has_seq_id(uint32_t i, llama_seq_id seq_id) const {
+        return seq[i].test(seq_id);
+    }
+
     bool get_has_shift() const {
         return has_shift;
     }

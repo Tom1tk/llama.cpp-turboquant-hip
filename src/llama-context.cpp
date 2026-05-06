@@ -3640,3 +3640,15 @@ void llama_opt_epoch(
         callback_train,
         callback_eval);
 }
+
+int32_t llama_kv_cache_read_k_for_pos(
+        const struct llama_context * ctx,
+                  int32_t   layer_idx,
+                  int32_t   pos_idx,
+                  int32_t   seq_id,
+                        float * output) {
+    if (!ctx) return 0;
+    auto * mem = const_cast<llama_context*>(ctx)->get_memory();
+    if (!mem) return 0;
+    return mem->read_k_data(layer_idx, pos_idx, seq_id, output);
+}

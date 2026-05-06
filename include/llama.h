@@ -718,6 +718,16 @@ extern "C" {
             llama_memory_t mem,
                       bool data);
 
+    // Read the K cache data for a specific layer at a given position index
+    // and dequantize to float32. output must be n_kv_heads * head_dim floats.
+    // Returns the number of floats written, or 0 if the layer has no KV cache.
+    LLAMA_API int32_t llama_kv_cache_read_k_for_pos(
+            const struct llama_context * ctx,
+                      int32_t   layer_idx,
+                      int32_t   pos_idx,
+                      int32_t   seq_id,
+                            float * output);
+
     // Removes all tokens that belong to the specified sequence and have positions in [p0, p1)
     // Returns false if a partial sequence cannot be removed. Removing a whole sequence never fails
     // seq_id < 0 : match any sequence

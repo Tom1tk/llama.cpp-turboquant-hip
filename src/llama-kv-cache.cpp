@@ -5,6 +5,8 @@
 #include "llama-model.h"
 #include "llama-context.h"
 
+#include "ggml-backend.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -2176,6 +2178,53 @@ void llama_kv_cache::state_write_meta(llama_io_write_i & io, const cell_ranges_t
             for (const auto & seq_id : seq_ids) {
                 io.write(&seq_id, sizeof(seq_id));
             }
+        }
+    }
+}
+
+int32_t llama_kv_cache::read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t seq_id, float * output) const {
+    const auto it = map_layer_ids.find(layer_idx);
+    if (it == map_layer_ids.end()) return 0;
+    const int32_t ikv = it->second;
+    if ((size_t)ikv >= layers.size()) return 0;
+
+    auto & layer = layers[ikv];
+    auto * k = layer.k;  // [n_embd_k_gqa, kv_size, n_stream]
+
+    // Find the cell index for this position
+    uint32_t cell_idx = (uint32_t)-1;
+    for (uint32_t strm = 0; strm < v_cells.size(); strm++) {
+        const auto & cells = v_cells[strm];
+        for (uint32_t i = 0; i < cells.size(); i++) {
+            if (!cells.is_empty(i) && cells.get_pos(i) == pos_idx && cells.has_seq_id(i, seq_id)) {
+                cell_idx = i;
+                break;
+            }
+        }
+        if (cell_idx != (uint32_t)-1) break;
+    }
+    if (cell_idx == (uint32_t)-1) return 0;
+
+    const uint64_t n_embd_k_gqa = k->ne[0];
+    const uint64_t k_size_row = ggml_row_size(k->type, n_embd_k_gqa);
+    const size_t n_floats = (size_t)n_embd_k_gqa;
+
+    // Read raw (possibly quantized) K data for this cell
+    std::vector<uint8_t> raw(k_size_row);
+    ggml_backend_tensor_get(k, raw.data(), cell_idx * k_size_row, k_size_row);
+
+    // Dequantize to f32
+    switch (k->type) {
+        case GGML_TYPE_F32: {
+            memcpy(output, raw.data(), n_floats * sizeof(float));
+            return (int32_t)n_floats;
+        }
+        case GGML_TYPE_F16: {
+            ggml_fp16_to_fp32_row((const ggml_fp16_t *)raw.data(), output, (int64_t)n_floats);
+            return (int32_t)n_floats;
+        }
+        default: {
+            return 0;
         }
     }
 }

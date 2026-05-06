@@ -120,6 +120,17 @@ struct llama_memory_i {
 
     virtual std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const = 0;
 
+    // Read K cache data for a specific layer and position (dequantized to f32)
+    // output must be n_kv_heads * head_dim floats
+    // Returns number of floats written, or 0 if not supported
+    virtual int32_t read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t seq_id, float * output) const {
+        (void)layer_idx;
+        (void)pos_idx;
+        (void)seq_id;
+        (void)output;
+        return 0;
+    }
+
     //
     // state write/read
     //

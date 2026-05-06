@@ -53,28 +53,9 @@ struct llama_context * pflash_init_draft(
     return ctx;
 }
 
-// Internal: read K values for all positions from the drafter's KV cache
-// after the drafter forward pass has been run on the complete prompt.
-// Returns all_k flattened as [n_tokens][kv_dim], or empty on failure.
-static std::vector<float> pflash_read_all_k(
-    struct llama_context * draft_ctx,
-    int32_t score_layer,
-    int32_t n_tokens)
-{
-    std::vector<float> probe_buf(16384);
-    int32_t kv_dim = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, 0, 0, probe_buf.data());
-    if (kv_dim <= 0) return {};
-
-    std::vector<float> all_k((size_t)n_tokens * kv_dim);
-    for (int32_t pos = 0; pos < n_tokens; pos++) {
-        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
-        if (n_read != kv_dim) return {};
-    }
-    return all_k;
-}
-
 // Internal: run drafter forward on a single chunk of tokens and read K values.
-// Concatenates K values into the flat all_k array starting at global_offset.
+// Uses explicit absolute positions so RoPE encodes global sequence position,
+// making K vectors comparable across windows via cosine similarity.
 static bool pflash_process_window(
     struct llama_context * draft_ctx,
     const std::vector<llama_token> & tokens,
@@ -87,97 +68,34 @@ static bool pflash_process_window(
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
 
-    int32_t n_batch = 2048;
     int32_t end = std::min(token_offset + n_window, (int32_t)tokens.size());
-    for (int32_t i = token_offset; i < end; i += n_batch) {
-        int32_t n = std::min(end - i, n_batch);
-        auto batch = llama_batch_get_one(const_cast<llama_token *>(&tokens[i]), n);
-        if (llama_decode(draft_ctx, batch) != 0) return false;
+    int32_t actual = end - token_offset;
+    int32_t n_batch = 2048;
+
+    for (int32_t i = 0; i < actual; i += n_batch) {
+        int32_t n = std::min(actual - i, n_batch);
+        struct llama_batch batch = llama_batch_init(n, 0, 1);
+        batch.n_tokens = n;
+        for (int32_t j = 0; j < n; j++) {
+            batch.token[j]     = tokens[token_offset + i + j];
+            batch.pos[j]       = token_offset + i + j;
+            batch.n_seq_id[j]  = 1;
+            batch.seq_id[j][0] = 0;
+            batch.logits[j]    = 0;
+        }
+        int ret = llama_decode(draft_ctx, batch);
+        llama_batch_free(batch);
+        if (ret != 0) return false;
     }
     llama_synchronize(draft_ctx);
 
-    for (int32_t pos = 0; pos < n_window && token_offset + pos < (int32_t)tokens.size(); pos++) {
+    // Read K from absolute positions (matching what was stored via batch.pos above)
+    for (int32_t pos = 0; pos < actual; pos++) {
         int32_t global_pos = token_offset + pos;
-        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)global_pos * kv_dim]);
+        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, global_pos, 0, &all_k[(size_t)global_pos * kv_dim]);
         if (n_read != kv_dim) return false;
     }
     return true;
-}
-
-std::vector<float> pflash_score(
-    struct llama_context * draft_ctx,
-    const std::vector<llama_token> & tokens,
-    int32_t score_layer,
-    int32_t block_size)
-{
-    const int32_t n_tokens = (int32_t)tokens.size();
-    if (n_tokens == 0) return {};
-
-    const int32_t n_layer = (int32_t)llama_model_n_layer(llama_get_model(draft_ctx));
-    // Auto-select scoring layer: probe layers to find the first one with K cache data
-    // (DeltaNet layers are filtered from the KV cache and return 0 from read_k_data)
-    if (score_layer < 0) {
-        score_layer = 0;
-        // Use a large probe buffer to safely determine the actual K cache dimension
-        // Qwen3.5 models have key_length != embedding_length / head_count,
-        // so we can't calculate the dimension from model metadata
-        std::vector<float> probe_buf(16384);
-        for (int32_t il = 0; il < std::min(n_layer, 32); il++) {
-            int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, il, 0, 0, probe_buf.data());
-            if (n_read > 0) {
-                score_layer = il;
-                break;
-            }
-        }
-        LOG_INF("pflash: auto-selected scoring layer %d", score_layer);
-    }
-
-    if (score_layer >= n_layer) {
-        LOG_WRN("pflash: score_layer %d >= n_layer %d, using 0", score_layer, n_layer);
-        score_layer = 0;
-    }
-
-    // Read K values for all positions (after drafter forward pass)
-    auto all_k = pflash_read_all_k(draft_ctx, score_layer, n_tokens);
-    if (all_k.empty()) {
-        LOG_ERR("pflash: failed to read K cache at layer %d", score_layer);
-        return {};
-    }
-    int32_t kv_dim = (int32_t)(all_k.size() / n_tokens);
-
-    // Score: for each block, compute mean K and cosine similarity to last K
-    const int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
-    std::vector<float> scores(n_blocks);
-
-    const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
-    float last_len = 0.0f;
-    for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
-    last_len = std::sqrt(std::max(last_len, 1e-12f));
-
-    std::vector<double> mean_k_buf(kv_dim);
-    for (int32_t b = 0; b < n_blocks; b++) {
-        int32_t start = b * block_size;
-        int32_t end = std::min(start + block_size, n_tokens);
-        int32_t block_len = end - start;
-
-        std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
-        for (int32_t p = start; p < end; p++) {
-            const float * kp = &all_k[(size_t)p * kv_dim];
-            for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] += kp[i];
-        }
-        float inv_len = 1.0f / (float)block_len;
-        for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] *= inv_len;
-
-        float dot = 0.0f, mean_len = 0.0f;
-        for (int32_t i = 0; i < kv_dim; i++) {
-            dot += (float)mean_k_buf[i] * last_k[i];
-            mean_len += (float)(mean_k_buf[i] * mean_k_buf[i]);
-        }
-        mean_len = std::sqrt(std::max(mean_len, 1e-12f));
-        scores[b] = dot / (mean_len * last_len);
-    }
-
-    return scores;
 }
 
 std::vector<pflash_span> pflash_select(

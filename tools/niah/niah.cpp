@@ -15,6 +15,7 @@
 #include <set>
 #include <fstream>
 #include <iostream>
+#include <unistd.h>
 
 using json = nlohmann::json;
 
@@ -37,10 +38,10 @@ struct niah_params {
 
     // PFlash options
     std::string draft_model;
-    float pflash_keep_ratio = 0.05f;
+    float pflash_keep_ratio = 0.75f;
     int32_t pflash_block_size = 128;
-    int32_t pflash_sink_tokens = 256;
-    int32_t pflash_recent_tokens = 1024;
+    int32_t pflash_sink_tokens = 2048;
+    int32_t pflash_recent_tokens = 4096;
     int32_t pflash_threshold = 8192;
     int32_t pflash_score_layer = -1;
     int32_t pflash_window_size = 4096;
@@ -100,10 +101,10 @@ static void print_usage() {
     fprintf(stdout, "\n");
     fprintf(stdout, "PFlash options:\n");
     fprintf(stdout, "  --draft <path>          draft model for PFlash compression\n");
-    fprintf(stdout, "  --pflash-keep-ratio <f> keep ratio (default: 0.05)\n");
+    fprintf(stdout, "  --pflash-keep-ratio <f> keep ratio (default: 0.75)\n");
     fprintf(stdout, "  --pflash-block-size <n> scoring block size (default: 128)\n");
-    fprintf(stdout, "  --pflash-sink <n>       sink tokens to keep (default: 256)\n");
-    fprintf(stdout, "  --pflash-recent <n>     recent tokens to keep (default: 1024)\n");
+    fprintf(stdout, "  --pflash-sink <n>       sink tokens to keep (default: 2048)\n");
+    fprintf(stdout, "  --pflash-recent <n>     recent tokens to keep (default: 4096)\n");
     fprintf(stdout, "  --pflash-threshold <n>  min tokens to apply PFlash (default: 8192)\n");
     fprintf(stdout, "  --pflash-layer <n>      scoring layer index (default: auto)\n");
     fprintf(stdout, "  --pflash-window <n>     chunk window size for drafter (default: 4096, 0=full)\n");
@@ -111,17 +112,24 @@ static void print_usage() {
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
 
-static std::string md5_hex(const std::string &str) {
-    std::string cmd = "printf '%s'";
-    cmd += " | md5sum 2>/dev/null | cut -d' ' -f1";
-    FILE *fp = popen(("echo -n " + str + " | md5sum | cut -d' ' -f1").c_str(), "r");
-    if (!fp) return "";
+static std::string md5_hex(const std::string & str) {
+    // Write content to a temp file then hash it, avoiding shell injection
+    char tmp[] = "/tmp/pflash_niah_XXXXXX";
+    int fd = mkstemp(tmp);
+    if (fd < 0) return "";
+    write(fd, str.data(), str.size());
+    close(fd);
+    std::string cmd = std::string("md5sum '") + tmp + "' 2>/dev/null | cut -d' ' -f1";
+    FILE * fp = popen(cmd.c_str(), "r");
+    if (!fp) { unlink(tmp); return ""; }
     char buf[33] = {0};
-    if (fgets(buf, sizeof(buf), fp)) {
-        buf[32] = 0;
-    }
+    if (fgets(buf, sizeof(buf), fp)) { buf[32] = 0; }
     pclose(fp);
-    return buf;
+    unlink(tmp);
+    // Strip trailing newline if present
+    std::string result(buf);
+    if (!result.empty() && result.back() == '\n') result.pop_back();
+    return result;
 }
 
 static std::vector<niah_fixture> load_fixtures(const std::string &path) {

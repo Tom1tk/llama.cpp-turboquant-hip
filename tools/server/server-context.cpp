@@ -2244,12 +2244,7 @@ private:
                         slot.state = SLOT_STATE_PROCESSING_PROMPT;
 
                         // PFlash compression: compress prompt tokens if enabled.
-                        // When PFlash is active, set a default n_predict safety net
-                        // to prevent infinite generation if compressed prompts break EOS.
                         if (ctx_pflash_draft && params_base.speculative.pflash_mode > 0 && !slot.task->tokens.empty()) {
-                            if (slot.task->params.n_predict == -1) {
-                                const_cast<server_task&>(*slot.task).params.n_predict = 2048;
-                            }
                             std::vector<llama_token> raw_tokens;
                             raw_tokens.reserve(input_tokens.size());
                             for (size_t i = 0; i < input_tokens.size(); i++) {
@@ -2271,7 +2266,7 @@ private:
                             pparams.sink_tokens = params_base.speculative.pflash_sink_tokens;
                             pparams.recent_tokens = params_base.speculative.pflash_recent_tokens;
                             pparams.window_size = params_base.speculative.pflash_window_size;
-                            pparams.score_layer = -1;
+                            pparams.score_layer = params_base.speculative.pflash_score_layer;
 
                             auto pfr = pflash_compress(ctx_pflash_draft, raw_tokens, pparams);
                             if (!pfr.bypassed && !pfr.tokens.empty()) {

@@ -3637,6 +3637,34 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.speculative.pflash_window_size = value;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_WINDOW"));
+    add_opt(common_arg(
+        {"--pflash-sink"}, "N",
+        "Number of prefix tokens always kept by PFlash (sink anchor, default: 2048)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_sink_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_SINK"));
+    add_opt(common_arg(
+        {"--pflash-recent"}, "N",
+        "Number of suffix tokens always kept by PFlash (recent anchor, default: 4096)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_recent_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_RECENT"));
+    add_opt(common_arg(
+        {"--pflash-block-size"}, "N",
+        "PFlash scoring block granularity in tokens (default: 128)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_block_size = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_BLOCK_SIZE"));
+    add_opt(common_arg(
+        {"--pflash-layer"}, "N",
+        "PFlash scoring layer index (-1 = auto-detect first attention layer, default: -1)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_score_layer = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_LAYER"));
 
     add_opt(common_arg(
         {"-mv", "--model-vocoder"}, "FNAME",

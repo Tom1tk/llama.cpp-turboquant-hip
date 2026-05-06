@@ -2261,14 +2261,14 @@ private:
 
                             auto pfr = pflash_compress(ctx_pflash_draft, raw_tokens, pparams);
                             if (!pfr.bypassed && !pfr.tokens.empty()) {
+                                // Store in slot for log_perf stats and replace task tokens
+                                slot.pflash_tokens = pfr.tokens;
+                                auto & mt = const_cast<server_tokens&>(slot.task->tokens);
+                                mt = server_tokens(llama_tokens(pfr.tokens.begin(), pfr.tokens.end()), false);
                                 SLT_INF(slot, "PFlash: %d -> %zu tokens (%.1f%% kept, draft %lldms)\n",
                                         (int)raw_tokens.size(), pfr.tokens.size(),
                                         100.0 * pfr.tokens.size() / raw_tokens.size(),
                                         (long long)(pfr.draft_us / 1000));
-                                // Replace slot task tokens with compressed tokens
-                                auto & mutable_tokens = const_cast<server_tokens&>(slot.task->tokens);
-                                mutable_tokens = server_tokens(
-                                    llama_tokens(pfr.tokens.begin(), pfr.tokens.end()), false);
                             } else {
                                 SLT_DBG(slot, "PFlash: bypassed (%d tokens, threshold %d)\n",
                                         (int)raw_tokens.size(), pparams.threshold_tokens);

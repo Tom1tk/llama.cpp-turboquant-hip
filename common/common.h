@@ -355,11 +355,11 @@ struct common_params_speculative {
 
     // PFlash speculative prefill parameters
     int32_t pflash_mode = 0;           // 0=off, 1=auto, 2=on
-    float   pflash_keep_ratio = 0.05f; // fraction of tokens to keep
+    float   pflash_keep_ratio = 0.10f; // fraction of tokens to keep (0.10=10%)
     int32_t pflash_threshold = 8192;   // min tokens to apply PFlash (auto mode)
     int32_t pflash_block_size = 128;   // scoring block size
-    int32_t pflash_sink_tokens = 256;  // always-keep prefix tokens
-    int32_t pflash_recent_tokens = 1024; // always-keep suffix tokens
+    int32_t pflash_sink_tokens = 512;  // always-keep prefix tokens (preserves system prompt)
+    int32_t pflash_recent_tokens = 2048; // always-keep suffix tokens (preserves user message)
     int32_t pflash_window_size = 4096; // chunk window size
 
     bool has_dft() const {

@@ -13,7 +13,8 @@ struct llama_context * pflash_init_draft(
     int32_t n_ctx,
     const std::string & cache_type_k,
     const std::string & cache_type_v,
-    int32_t n_gpu_layers)
+    int32_t n_gpu_layers,
+    bool use_bsa)
 {
     auto mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
@@ -29,6 +30,7 @@ struct llama_context * pflash_init_draft(
     cparams.n_batch = 2048;
     cparams.n_ubatch = 512;
     cparams.offload_kqv = (n_gpu_layers != 0);
+    cparams.use_pflash_bsa = use_bsa;
 
     if (cache_type_k == "q8_0") {
         cparams.type_k = GGML_TYPE_Q8_0;
@@ -65,7 +67,8 @@ static bool pflash_process_window(
     int32_t n_window,
     int32_t score_layer,
     int32_t kv_dim,
-    std::vector<float> & all_k)
+    std::vector<float> & all_k,
+    bool use_bsa)
 {
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
@@ -73,6 +76,34 @@ static bool pflash_process_window(
     int32_t end = std::min(token_offset + n_window, (int32_t)tokens.size());
     int32_t actual = end - token_offset;
     int32_t n_batch = 2048;
+
+    // Compute and set BSA block mask before decode
+    if (use_bsa) {
+        const int BSA_BLOCK = 128;
+        const int n_sink_b = 16;   // 16 * 128 = 2048 sink tokens
+        const int n_local_b = 32;  // 32 * 128 = 4096 recent tokens
+
+        int n_blocks = (actual + BSA_BLOCK - 1) / BSA_BLOCK;
+        std::vector<int32_t> selected_blocks;
+        selected_blocks.reserve(n_sink_b + n_local_b);
+
+        // Sink blocks
+        int sink_end = std::min(n_sink_b, n_blocks);
+        for (int b = 0; b < sink_end; b++) {
+            selected_blocks.push_back(b);
+        }
+
+        // Local window blocks (deduplicate with sink)
+        int local_start = std::max(sink_end, n_blocks - n_local_b);
+        for (int b = local_start; b < n_blocks; b++) {
+            // Dedup: skip if already in sink range (happens when proc_n < actual, small windows)
+            if (b >= sink_end) {
+                selected_blocks.push_back(b);
+            }
+        }
+
+        llama_set_pflash_bsa_mask(draft_ctx, selected_blocks.data(), (int32_t)selected_blocks.size());
+    }
 
     for (int32_t i = 0; i < actual; i += n_batch) {
         int32_t n = std::min(actual - i, n_batch);
@@ -291,6 +322,22 @@ pflash_result pflash_compress(
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
     int32_t n_batch = 2048;
+
+    // Set BSA block mask for initial probe window
+    if (params.use_bsa) {
+        const int BSA_BLOCK = 128;
+        const int n_sink_b = 16;
+        const int n_local_b = 32;
+        int n_blocks = (probe_n + BSA_BLOCK - 1) / BSA_BLOCK;
+        std::vector<int32_t> selected;
+        selected.reserve(n_sink_b + n_local_b);
+        int sink_end = std::min(n_sink_b, n_blocks);
+        for (int b = 0; b < sink_end; b++) selected.push_back(b);
+        int local_start = std::max(sink_end, n_blocks - n_local_b);
+        for (int b = local_start; b < n_blocks; b++) selected.push_back(b);
+        llama_set_pflash_bsa_mask(draft_ctx, selected.data(), (int32_t)selected.size());
+    }
+
     for (int32_t i = 0; i < probe_n; i += n_batch) {
         int32_t n = std::min(probe_n - i, n_batch);
         auto batch = llama_batch_get_one(const_cast<llama_token *>(&tokens[i]), n);
@@ -357,7 +404,7 @@ pflash_result pflash_compress(
     if (use_chunked) {
         for (int32_t offset = win; offset < n_tokens; offset += win) {
             int32_t n_win = std::min(win, n_tokens - offset);
-            if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k)) {
+            if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k, params.use_bsa)) {
                 LOG_ERR("pflash: window at %d failed", offset);
                 res.bypassed = true; res.tokens = tokens; return res;
             }

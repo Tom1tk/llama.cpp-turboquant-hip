@@ -561,6 +561,9 @@ struct llm_graph_params {
 
     uint32_t n_outputs;
 
+    // pflash BSA block mask — pre-filled before decode
+    ggml_tensor * bsa_block_mask = nullptr;
+
     llm_graph_cb cb;
 
     llm_graph_result * res;
@@ -686,6 +689,9 @@ public:
 
     int64_t max_nodes;
 
+    // pflash BSA block mask — pre-filled int32[] before decode
+    ggml_tensor * bsa_block_mask = nullptr;
+
 private:
     // keep a copy of the previous graph parameters
     // we will use this to determine whether the graph can be reused by comparing them with the new parameters
@@ -749,6 +755,8 @@ struct llm_graph_context {
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
+
+    ggml_tensor * bsa_block_mask; // pflash BSA mask from params
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 

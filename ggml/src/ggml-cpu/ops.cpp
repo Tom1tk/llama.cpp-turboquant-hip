@@ -11326,3 +11326,9 @@ void ggml_compute_forward_opt_step_sgd(const ggml_compute_params * params, ggml_
             }
     }
 }
+
+void ggml_compute_forward_pflash_bsa_attn(const ggml_compute_params * params, ggml_tensor * dst) {
+    GGML_UNUSED(params);
+    GGML_UNUSED(dst);
+    GGML_ABORT("PFLASH_BSA_ATTN requires GPU backend");
+}

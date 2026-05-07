@@ -581,6 +581,8 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_PFLASH_BSA_ATTN,
+
         GGML_OP_COUNT,
     };
 
@@ -2352,6 +2354,14 @@ extern "C" {
     GGML_API void ggml_flash_attn_ext_add_sinks(
             struct ggml_tensor * a,
             struct ggml_tensor * sinks);
+
+    GGML_API struct ggml_tensor * ggml_pflash_bsa_attn(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * block_mask,
+            float                 scale);
 
     // TODO: needs to be adapted to ggml_flash_attn_ext
     GGML_API struct ggml_tensor * ggml_flash_attn_back(

@@ -163,6 +163,21 @@ llama_context::llama_context(
     cparams.op_offload = params.op_offload;
     cparams.kv_unified = params.kv_unified;
 
+    cparams.use_pflash_bsa  = params.use_pflash_bsa;
+    cparams.bsa_block_size  = 128;
+    cparams.bsa_n_sink_blocks  = 16;
+    cparams.bsa_n_local_blocks = 32;
+
+    // Allocate persistent BSA block mask tensor (used by PFlash drafter)
+    if (cparams.use_pflash_bsa) {
+        ggml_init_params bsa_params = {};
+        bsa_params.mem_size = ggml_tensor_overhead() + 4096; // small context for mask
+        bsa_params.no_alloc = false;
+        bsa_mask_ctx.reset(ggml_init(bsa_params));
+        bsa_block_mask = ggml_new_tensor_1d(bsa_mask_ctx.get(), GGML_TYPE_I32, 1024);
+        ggml_set_input(bsa_block_mask);
+    }
+
     // initialized later
     cparams.pipeline_parallel = false;
 
@@ -1059,6 +1074,16 @@ void llama_context::set_warmup(bool value) {
 
     // warmups are usually with small batches, so no need to reserve
     //sched_need_reserve = true;
+}
+
+void llama_context::set_pflash_bsa_mask(const int32_t * block_indices, int32_t n_selected) {
+    if (!bsa_block_mask || n_selected <= 0 || n_selected > bsa_block_mask->ne[0]) {
+        return;
+    }
+
+    GGML_ASSERT(bsa_block_mask->data != nullptr);
+    bsa_block_mask->ne[0] = n_selected;
+    memcpy(bsa_block_mask->data, block_indices, (size_t)n_selected * sizeof(int32_t));
 }
 
 bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
@@ -2160,6 +2185,7 @@ llm_graph_params llama_context::graph_params(
         /*.cross       =*/ &cross,
         /*.samplers    =*/ sampling.samplers,
         /*.n_outputs   =*/ n_outputs,
+        /*.bsa_block_mask =*/ bsa_block_mask,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
     };
@@ -2912,6 +2938,7 @@ llama_context_params llama_context_default_params() {
         /*.op_offload                  =*/ true,
         /*.swa_full                    =*/ true,
         /*.kv_unified                  =*/ false,
+        /*.use_pflash_bsa              =*/ false,
         /*.sampler                     =*/ nullptr,
         /*.n_sampler                   =*/ 0,
     };
@@ -3062,6 +3089,10 @@ void llama_set_causal_attn(llama_context * ctx, bool causal_attn) {
 
 void llama_set_warmup(llama_context * ctx, bool warmup) {
     ctx->set_warmup(warmup);
+}
+
+void llama_set_pflash_bsa_mask(llama_context * ctx, const int32_t * block_indices, int32_t n_selected) {
+    ctx->set_pflash_bsa_mask(block_indices, n_selected);
 }
 
 void llama_synchronize(llama_context * ctx) {

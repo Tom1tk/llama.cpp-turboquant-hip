@@ -234,6 +234,8 @@ public:
 
     bool set_sampler(llama_seq_id seq_id, llama_sampler * sampler);
 
+    void set_pflash_bsa_mask(const int32_t * block_indices, int32_t n_selected);
+
 private:
     llm_graph_params graph_params(
                         llm_graph_result * res,
@@ -264,6 +266,9 @@ private:
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably
 
     std::unique_ptr<llama_memory_i> memory;
+
+    ggml_context_ptr bsa_mask_ctx;
+    ggml_tensor     * bsa_block_mask = nullptr;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     buffer_view<float> logits = {nullptr, 0};

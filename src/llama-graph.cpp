@@ -929,6 +929,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     loras            (params.loras),
     mctx             (params.mctx),
     cross            (params.cross),
+    bsa_block_mask   (params.bsa_block_mask),
     samplers         (params.samplers),
     cb_func          (params.cb),
     res              (params.res),
@@ -1857,6 +1858,28 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 
     ggml_tensor * cur;
 
+    // PFlash BSA: block-sparse attention (drafter prefill only)
+    if (cparams.use_pflash_bsa && bsa_block_mask != nullptr) {
+        if (k->type == GGML_TYPE_F16) {
+            k = ggml_cast(ctx0, k, GGML_TYPE_F32);
+        }
+        if (v->type == GGML_TYPE_F16) {
+            v = ggml_cast(ctx0, v, GGML_TYPE_F32);
+        }
+
+        cur = ggml_pflash_bsa_attn(ctx0, q, k, v, bsa_block_mask, kq_scale);
+        cb(cur, LLAMA_TENSOR_NAME_FATTN, il);
+
+        if (v_mla) {
+            cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
+            cur = ggml_mul_mat(ctx0, v_mla, cur);
+            cb(cur, "fattn_mla", il);
+            cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
+            cur = ggml_cont(ctx0, cur);
+        }
+
+        cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*cur->ne[1], cur->ne[2]*cur->ne[3]);
+    } else {
     const bool use_flash_attn = cparams.flash_attn && kq_b == nullptr;
     if (use_flash_attn) {
         GGML_ASSERT(kq_b == nullptr && "Flash attention does not support KQ bias yet");
@@ -1988,6 +2011,7 @@ ggml_tensor * llm_graph_context::build_attn_mha(
             // all nodes between the KV store and the attention output are run on the CPU
             ggml_backend_sched_set_tensor_backend(sched, cur, backend_cpu);
         }
+    }
     }
 
     // TurboQuant: graph-side inverse WHT on attention output (undoes V rotation)

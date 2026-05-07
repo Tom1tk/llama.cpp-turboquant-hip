@@ -31,6 +31,10 @@ struct llama_cparams {
     bool offload_kqv;
     bool flash_attn;
     bool auto_fa;
+    bool use_pflash_bsa;
+    int  bsa_block_size;
+    int  bsa_n_sink_blocks;
+    int  bsa_n_local_blocks;
     bool fused_gdn_ar;       // use fused gated delta net (autoregressive)
     bool fused_gdn_ch;       // use fused gated delta net (chunked)
     bool auto_fgdn;

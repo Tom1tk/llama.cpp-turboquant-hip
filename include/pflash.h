@@ -70,7 +70,8 @@ struct llama_context * pflash_init_draft(
     int32_t n_ctx,
     const std::string & cache_type_k,
     const std::string & cache_type_v,
-    int32_t n_gpu_layers = -1);
+    int32_t n_gpu_layers = -1,
+    bool use_bsa = false);
 
 // Select which spans to keep based on scores and configuration
 std::vector<pflash_span> pflash_select(

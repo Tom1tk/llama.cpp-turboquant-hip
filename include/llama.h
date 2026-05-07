@@ -373,8 +373,9 @@ extern "C" {
                           // NOTE: setting to false when n_seq_max > 1 can cause bad performance in some cases
                           //       ref: https://github.com/ggml-org/llama.cpp/pull/13845#issuecomment-2924800573
         bool kv_unified;  // use a unified buffer across the input sequences when computing the attention
-                          // try to disable when n_seq_max > 1 for improved performance when the sequences do not share a large prefix
-                          // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+                           // try to disable when n_seq_max > 1 for improved performance when the sequences do not share a large prefix
+                           // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+        bool use_pflash_bsa; // use block-sparse attention in pflash drafter
 
         // [EXPERIMENTAL]
         // backend sampler chain configuration (make sure the caller keeps the sampler chains alive)
@@ -1013,7 +1014,9 @@ extern "C" {
     // If true, all model tensors are activated during llama_decode() to load and cache their weights.
     LLAMA_API void llama_set_warmup(struct llama_context * ctx, bool warmup);
 
-    // Set abort callback
+    // PFlash: set BSA block mask before drafter decode
+    LLAMA_API void llama_set_pflash_bsa_mask(struct llama_context * ctx, const int32_t * block_indices, int32_t n_selected);
+
     LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, ggml_abort_callback abort_callback, void * abort_callback_data);
 
     // Wait until all computations are finished

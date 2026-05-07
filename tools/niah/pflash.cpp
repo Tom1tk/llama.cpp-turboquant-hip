@@ -11,10 +11,11 @@ struct llama_context * pflash_init_draft(
     const std::string & model_path,
     int32_t n_ctx,
     const std::string & cache_type_k,
-    const std::string & cache_type_v)
+    const std::string & cache_type_v,
+    int32_t n_gpu_layers)
 {
     auto mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 0;
+    mparams.n_gpu_layers = n_gpu_layers;
 
     struct llama_model * model = llama_model_load_from_file(model_path.c_str(), mparams);
     if (!model) {
@@ -26,7 +27,7 @@ struct llama_context * pflash_init_draft(
     cparams.n_ctx = n_ctx;
     cparams.n_batch = 2048;
     cparams.n_ubatch = 512;
-    cparams.offload_kqv = false;
+    cparams.offload_kqv = (n_gpu_layers != 0);
 
     if (cache_type_k == "q8_0") {
         cparams.type_k = GGML_TYPE_Q8_0;
@@ -89,12 +90,10 @@ static bool pflash_process_window(
     }
     llama_synchronize(draft_ctx);
 
-    // Read K from absolute positions (matching what was stored via batch.pos above)
-    for (int32_t pos = 0; pos < actual; pos++) {
-        int32_t global_pos = token_offset + pos;
-        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, global_pos, 0, &all_k[(size_t)global_pos * kv_dim]);
-        if (n_read != kv_dim) return false;
-    }
+    // Bulk read all K values in one pass (O(n_cells) instead of O(n_cells * n_tokens))
+    std::vector<int32_t> positions(actual);
+    int32_t n_read = llama_kv_cache_read_k_bulk(draft_ctx, score_layer, 0, &all_k[(size_t)token_offset * kv_dim], positions.data(), actual);
+    if (n_read != actual) return false;
     return true;
 }
 
@@ -325,11 +324,12 @@ pflash_result pflash_compress(
     // Step 4: Process all tokens in windows
     std::vector<float> all_k((size_t)n_tokens * kv_dim);
 
-    // Read K values from first window (already processed above)
-    for (int32_t pos = 0; pos < probe_n; pos++) {
-        int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
-        if (n_read != kv_dim) {
-            LOG_ERR("pflash: K cache read failed at pos %d", pos);
+    // Bulk read K values from first window (single O(n_cells) pass)
+    {
+        std::vector<int32_t> positions(probe_n);
+        int32_t n_read = llama_kv_cache_read_k_bulk(draft_ctx, score_layer, 0, all_k.data(), positions.data(), probe_n);
+        if (n_read != probe_n) {
+            LOG_ERR("pflash: bulk K cache read failed (got %d, expected %d)", n_read, probe_n);
             res.bypassed = true; res.tokens = tokens; return res;
         }
     }
@@ -344,13 +344,12 @@ pflash_result pflash_compress(
             }
         }
     } else if (n_tokens > probe_n) {
-        // Full prompt without chunking: read remaining positions
-        for (int32_t pos = probe_n; pos < n_tokens; pos++) {
-            int32_t n_read = llama_kv_cache_read_k_for_pos(draft_ctx, score_layer, pos, 0, &all_k[(size_t)pos * kv_dim]);
-            if (n_read != kv_dim) {
-                LOG_ERR("pflash: K cache read failed at pos %d", pos);
-                res.bypassed = true; res.tokens = tokens; return res;
-            }
+        // Full prompt without chunking: bulk read remaining positions
+        std::vector<int32_t> positions(n_tokens - probe_n);
+        int32_t n_read = llama_kv_cache_read_k_bulk(draft_ctx, score_layer, 0, &all_k[(size_t)probe_n * kv_dim], positions.data(), n_tokens - probe_n);
+        if (n_read != n_tokens - probe_n) {
+            LOG_ERR("pflash: bulk K cache read failed (got %d, expected %d)", n_read, n_tokens - probe_n);
+            res.bypassed = true; res.tokens = tokens; return res;
         }
     }
     res.draft_us = ggml_time_us() - t0;

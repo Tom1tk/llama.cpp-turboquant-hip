@@ -8,6 +8,7 @@
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
+#include "llama-kv-cache.h"
 
 #include <cinttypes>
 #include <cmath>
@@ -3651,4 +3652,33 @@ int32_t llama_kv_cache_read_k_for_pos(
     auto * mem = const_cast<llama_context*>(ctx)->get_memory();
     if (!mem) return 0;
     return mem->read_k_data(layer_idx, pos_idx, seq_id, output);
+}
+
+int32_t llama_kv_cache_read_k_bulk(
+        const struct llama_context * ctx,
+                  int32_t   layer_idx,
+                  int32_t   seq_id,
+                        float * output,
+                      int32_t * out_positions,
+                  int32_t   max_tokens) {
+    if (!ctx || !output || !out_positions || max_tokens <= 0) return 0;
+    auto * mem = const_cast<llama_context*>(ctx)->get_memory();
+    if (!mem) return 0;
+    return mem->read_k_data_bulk(layer_idx, seq_id, output, out_positions, max_tokens);
+}
+
+struct ggml_tensor * llama_kv_cache_get_k_tensor(
+        const struct llama_context * ctx,
+                  int32_t   layer_idx) {
+    if (!ctx) return nullptr;
+    auto * mem = const_cast<llama_context*>(ctx)->get_memory();
+    if (!mem) return nullptr;
+
+    // Dynamic cast to llama_kv_cache* to access k_stream
+    // This is safe because only llama_kv_cache supports read_k_data (others return 0)
+    // Alternative would be adding get_k_tensor to the virtual interface, but this
+    // is simpler and follows the existing pattern.
+    struct llama_kv_cache * kv = dynamic_cast<llama_kv_cache*>(mem);
+    if (!kv) return nullptr;
+    return kv->get_k_tensor(layer_idx);
 }

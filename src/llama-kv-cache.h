@@ -144,6 +144,8 @@ public:
     void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) override;
 
     int32_t read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t seq_id, float * output) const override;
+    int32_t read_k_data_bulk(int32_t layer_idx, int32_t seq_id, float * output, int32_t * out_positions, int32_t max_tokens) const override;
+    ggml_tensor * get_k_tensor(int32_t layer_idx) const;
 
     //
     // llama_kv_cache specific API

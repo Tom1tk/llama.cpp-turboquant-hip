@@ -2232,6 +2232,62 @@ int32_t llama_kv_cache::read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t 
     }
 }
 
+int32_t llama_kv_cache::read_k_data_bulk(int32_t layer_idx, int32_t seq_id, float * output, int32_t * out_positions, int32_t max_tokens) const {
+    const auto it = map_layer_ids.find(layer_idx);
+    if (it == map_layer_ids.end()) return 0;
+    const int32_t ikv = it->second;
+    if ((size_t)ikv >= layers.size()) return 0;
+
+    auto & layer = layers[ikv];
+    auto * k = layer.k_stream.empty() ? nullptr : layer.k_stream[0];
+    if (!k) return 0;
+
+    const uint64_t n_embd_k_gqa = k->ne[0];
+    const uint64_t k_size_row = ggml_row_size(k->type, n_embd_k_gqa);
+    const size_t n_floats = (size_t)n_embd_k_gqa;
+
+    int32_t count = 0;
+    std::vector<uint8_t> raw(k_size_row);
+
+    for (uint32_t strm = 0; strm < v_cells.size() && count < max_tokens; strm++) {
+        const auto & cells = v_cells[strm];
+        for (uint32_t i = 0; i < cells.size() && count < max_tokens; i++) {
+            if (cells.is_empty(i) || !cells.has_seq_id(i, seq_id)) continue;
+
+            ggml_backend_tensor_get(k, raw.data(), i * k_size_row, k_size_row);
+            float * row_out = output + (size_t)count * n_floats;
+
+            switch (k->type) {
+                case GGML_TYPE_F32: {
+                    memcpy(row_out, raw.data(), n_floats * sizeof(float));
+                    break;
+                }
+                case GGML_TYPE_F16: {
+                    ggml_fp16_to_fp32_row((const ggml_fp16_t *)raw.data(), row_out, (int64_t)n_floats);
+                    break;
+                }
+                default: {
+                    continue;
+                }
+            }
+
+            out_positions[count] = cells.get_pos(i);
+            count++;
+        }
+    }
+
+    return count;
+}
+
+ggml_tensor * llama_kv_cache::get_k_tensor(int32_t layer_idx) const {
+    const auto it = map_layer_ids.find(layer_idx);
+    if (it == map_layer_ids.end()) return nullptr;
+    const int32_t ikv = it->second;
+    if ((size_t)ikv >= layers.size()) return nullptr;
+    auto & layer = layers[ikv];
+    return layer.k_stream.empty() ? nullptr : layer.k_stream[0];
+}
+
 void llama_kv_cache::state_write_data(llama_io_write_i & io, const cell_ranges_t & cr) const {
     const auto & cells = v_cells[cr.strm];
 

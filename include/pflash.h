@@ -37,6 +37,12 @@ struct pflash_params {
 
     // Chunked window size for Phases 2-3 (0 = disabled, process full prompt)
     int32_t window_size = 4096;
+
+    // GPU layers for draft model (-1 = all, 0 = CPU only, N = first N layers)
+    int32_t draft_gpu_layers = -1;
+
+    // Use Block-Sparse Attention for drafter (Phase 5C+)
+    bool use_bsa = false;
 };
 
 struct pflash_span {
@@ -57,12 +63,14 @@ struct pflash_result {
 };
 
 // Initialize a draft model context from a GGUF file
+// n_gpu_layers: number of layers to offload to GPU (-1 = all, 0 = CPU only)
 // Returns a new llama_context configured for the drafter
 struct llama_context * pflash_init_draft(
     const std::string & model_path,
     int32_t n_ctx,
     const std::string & cache_type_k,
-    const std::string & cache_type_v);
+    const std::string & cache_type_v,
+    int32_t n_gpu_layers = -1);
 
 // Select which spans to keep based on scores and configuration
 std::vector<pflash_span> pflash_select(

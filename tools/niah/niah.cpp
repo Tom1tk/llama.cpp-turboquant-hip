@@ -45,6 +45,7 @@ struct niah_params {
     int32_t pflash_threshold = 8192;
     int32_t pflash_score_layer = -1;
     int32_t pflash_window_size = 4096;
+    int32_t pflash_draft_gpu_layers = -1;
     std::string draft_cache_type_k = "f16";
     std::string draft_cache_type_v = "f16";
 };
@@ -108,6 +109,7 @@ static void print_usage() {
     fprintf(stdout, "  --pflash-threshold <n>  min tokens to apply PFlash (default: 8192)\n");
     fprintf(stdout, "  --pflash-layer <n>      scoring layer index (default: auto)\n");
     fprintf(stdout, "  --pflash-window <n>     chunk window size for drafter (default: 4096, 0=full)\n");
+    fprintf(stdout, "  --pflash-draft-gpu-layers <n> GPU layers for draft model (-1 = all, default: -1)\n");
     fprintf(stdout, "  --draft-cache-k <type>  drafter K cache type (default: f16)\n");
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
@@ -481,6 +483,8 @@ int main(int argc, char **argv) {
             params.pflash_score_layer = std::stoi(args[++i]);
         } else if (arg == "--pflash-window" && i + 1 < args.size()) {
             params.pflash_window_size = std::stoi(args[++i]);
+        } else if (arg == "--pflash-draft-gpu-layers" && i + 1 < args.size()) {
+            params.pflash_draft_gpu_layers = std::stoi(args[++i]);
         } else if (arg == "--draft-cache-k" && i + 1 < args.size()) {
             params.draft_cache_type_k = args[++i];
         } else if (arg == "--draft-cache-v" && i + 1 < args.size()) {
@@ -564,7 +568,8 @@ int main(int argc, char **argv) {
         LOG_INF("loading draft model: %s", params.draft_model.c_str());
         draft_ctx = pflash_init_draft(
             params.draft_model, n_ctx,
-            params.draft_cache_type_k, params.draft_cache_type_v);
+            params.draft_cache_type_k, params.draft_cache_type_v,
+            params.pflash_draft_gpu_layers);
         if (!draft_ctx) {
             LOG_ERR("failed to load draft model, continuing without PFlash");
         } else {

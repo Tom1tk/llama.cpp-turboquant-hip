@@ -3665,6 +3665,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.speculative.pflash_score_layer = value;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_LAYER"));
+    add_opt(common_arg(
+        {"--pflash-draft-gpu-layers"}, "N",
+        "GPU layers for PFlash draft model (-1 = all, 0 = CPU only, default: -1)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_draft_gpu_layers = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_DRAFT_GPU_LAYERS"));
 
     add_opt(common_arg(
         {"-mv", "--model-vocoder"}, "FNAME",

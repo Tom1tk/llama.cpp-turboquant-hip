@@ -131,6 +131,19 @@ struct llama_memory_i {
         return 0;
     }
 
+    // Bulk read all K cache data for a given layer and seq_id
+    // output: pre-allocated buffer of max_tokens * kv_dim floats
+    // out_positions: pre-allocated buffer of max_tokens int32_t's (receives absolute positions)
+    // Returns actual count of tokens written
+    virtual int32_t read_k_data_bulk(int32_t layer_idx, int32_t seq_id, float * output, int32_t * out_positions, int32_t max_tokens) const {
+        (void)layer_idx;
+        (void)seq_id;
+        (void)output;
+        (void)out_positions;
+        (void)max_tokens;
+        return 0;
+    }
+
     //
     // state write/read
     //

@@ -362,6 +362,7 @@ struct common_params_speculative {
     int32_t pflash_recent_tokens = 4096; // always-keep suffix tokens
     int32_t pflash_window_size = 4096;   // chunk window size for drafter forward
     int32_t pflash_score_layer = -1;     // scoring layer index (-1 = auto)
+    int32_t pflash_draft_gpu_layers = -1; // GPU layers for draft model (-1 = all)
 
     bool has_dft() const {
         return !mparams_dft.path.empty() || !mparams_dft.hf_repo.empty();

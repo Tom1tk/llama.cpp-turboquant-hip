@@ -183,6 +183,13 @@ int32_t llama_memory_hybrid::read_k_data(int32_t layer_idx, int32_t pos_idx, int
     return 0;
 }
 
+int32_t llama_memory_hybrid::read_k_data_bulk(int32_t layer_idx, int32_t seq_id, float * output, int32_t * out_positions, int32_t max_tokens) const {
+    if (mem_attn) {
+        return mem_attn->read_k_data_bulk(layer_idx, seq_id, output, out_positions, max_tokens);
+    }
+    return 0;
+}
+
 void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
     if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
         mem_attn->state_write(io, seq_id, flags);

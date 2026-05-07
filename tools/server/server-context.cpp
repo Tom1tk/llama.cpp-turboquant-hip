@@ -715,7 +715,7 @@ private:
                 cparams.n_ctx = n_ctx;
                 cparams.n_batch = 2048;
                 cparams.n_ubatch = 512;
-                cparams.offload_kqv = false;
+                cparams.offload_kqv = (pspec.pflash_draft_gpu_layers != 0);
                 cparams.type_k = pspec.cache_type_k;
                 cparams.type_v = pspec.cache_type_v;
 
@@ -723,7 +723,7 @@ private:
                 llama_model * draft_model = model_dft.get();
                 if (!draft_model && pspec.has_dft()) {
                     auto mparams = llama_model_default_params();
-                    mparams.n_gpu_layers = 0;
+                    mparams.n_gpu_layers = pspec.pflash_draft_gpu_layers;
                     draft_model = llama_model_load_from_file(pspec.mparams_dft.path.c_str(), mparams);
                     if (draft_model) {
                         model_dft.reset(draft_model);

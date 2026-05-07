@@ -728,6 +728,24 @@ extern "C" {
                       int32_t   seq_id,
                             float * output);
 
+    // Bulk read all K cache data for a given layer and seq_id in a single pass.
+    // output: pre-allocated buffer of max_tokens * (n_kv_heads * head_dim) floats.
+    // out_positions: pre-allocated buffer of max_tokens int32_t's; receives absolute positions.
+    // Returns the actual number of tokens written, or 0 if the layer has no KV cache.
+    LLAMA_API int32_t llama_kv_cache_read_k_bulk(
+            const struct llama_context * ctx,
+                      int32_t   layer_idx,
+                      int32_t   seq_id,
+                            float * output,
+                          int32_t * out_positions,
+                      int32_t   max_tokens);
+
+    // Get the raw K ggml_tensor for a given layer (for direct GPU access).
+    // Returns nullptr if the layer has no KV cache.
+    LLAMA_API struct ggml_tensor * llama_kv_cache_get_k_tensor(
+            const struct llama_context * ctx,
+                      int32_t   layer_idx);
+
     // Removes all tokens that belong to the specified sequence and have positions in [p0, p1)
     // Returns false if a partial sequence cannot be removed. Removing a whole sequence never fails
     // seq_id < 0 : match any sequence

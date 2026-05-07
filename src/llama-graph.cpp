@@ -1867,7 +1867,7 @@ ggml_tensor * llm_graph_context::build_attn_mha(
             v = ggml_cast(ctx0, v, GGML_TYPE_F32);
         }
 
-        cur = ggml_pflash_bsa_attn(ctx0, q, k, v, bsa_block_mask, kq_scale);
+        cur = ggml_pflash_bsa_attn(ctx0, q, k, v, bsa_block_mask, kq_scale, cparams.bsa_n_selected);
         cb(cur, LLAMA_TENSOR_NAME_FATTN, il);
 
         if (v_mla) {

@@ -5390,7 +5390,8 @@ struct ggml_tensor * ggml_pflash_bsa_attn(
         struct ggml_tensor  * k,
         struct ggml_tensor  * v,
         struct ggml_tensor  * block_mask,
-        float                 scale) {
+        float                 scale,
+        int32_t               n_selected) {
     GGML_ASSERT(q->type == GGML_TYPE_F32);
     GGML_ASSERT(k->type == GGML_TYPE_F32);
     GGML_ASSERT(v->type == GGML_TYPE_F32);
@@ -5399,7 +5400,8 @@ struct ggml_tensor * ggml_pflash_bsa_attn(
     int64_t ne[4] = { v->ne[0], q->ne[2], q->ne[1], q->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
 
-    ggml_set_op_params_f32(result, 0, scale);
+    float params[2] = { scale, (float)n_selected };
+    ggml_set_op_params(result, params, sizeof(params));
 
     result->op     = GGML_OP_PFLASH_BSA_ATTN;
     result->src[0] = q;

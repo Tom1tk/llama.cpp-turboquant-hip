@@ -171,11 +171,19 @@ llama_context::llama_context(
     // Allocate persistent BSA block mask tensor (used by PFlash drafter)
     if (cparams.use_pflash_bsa) {
         ggml_init_params bsa_params = {};
-        bsa_params.mem_size = ggml_tensor_overhead() + 4096; // small context for mask
-        bsa_params.no_alloc = false;
+        bsa_params.mem_size = ggml_tensor_overhead();
+        bsa_params.no_alloc = true;
         bsa_mask_ctx.reset(ggml_init(bsa_params));
         bsa_block_mask = ggml_new_tensor_1d(bsa_mask_ctx.get(), GGML_TYPE_I32, 1024);
-        ggml_set_input(bsa_block_mask);
+
+        for (auto & backend : backends) {
+            auto dev_type = ggml_backend_dev_type(ggml_backend_get_device(backend.get()));
+            if (dev_type == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                auto * gpu_buft = ggml_backend_get_default_buffer_type(backend.get());
+                ggml_backend_alloc_ctx_tensors_from_buft(bsa_mask_ctx.get(), gpu_buft);
+                break;
+            }
+        }
     }
 
     // initialized later
@@ -1081,9 +1089,9 @@ void llama_context::set_pflash_bsa_mask(const int32_t * block_indices, int32_t n
         return;
     }
 
-    GGML_ASSERT(bsa_block_mask->data != nullptr);
-    bsa_block_mask->ne[0] = n_selected;
-    memcpy(bsa_block_mask->data, block_indices, (size_t)n_selected * sizeof(int32_t));
+    cparams.bsa_n_selected = n_selected;
+    ggml_backend_tensor_set(bsa_block_mask, block_indices, 0,
+                            (size_t)n_selected * sizeof(int32_t));
 }
 
 bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {

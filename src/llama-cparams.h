@@ -35,6 +35,7 @@ struct llama_cparams {
     int  bsa_block_size;
     int  bsa_n_sink_blocks;
     int  bsa_n_local_blocks;
+    int  bsa_n_selected;      // current mask element count, set before decode
     bool fused_gdn_ar;       // use fused gated delta net (autoregressive)
     bool fused_gdn_ch;       // use fused gated delta net (chunked)
     bool auto_fgdn;

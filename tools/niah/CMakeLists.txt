@@ -12,3 +12,19 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
+
+if(GGML_HIPBLAS)
+    set(TEST_BSA test-bsa)
+    add_executable(${TEST_BSA}
+        test_bsa.cpp
+    )
+    target_include_directories(${TEST_BSA} PRIVATE
+        ${CMAKE_SOURCE_DIR}/vendor
+        ${CMAKE_SOURCE_DIR}/include
+        /opt/rocm/include
+    )
+    target_link_libraries(${TEST_BSA} PRIVATE common llama ggml-hip ${CMAKE_THREAD_LIBS_INIT} amdhip64)
+    target_link_directories(${TEST_BSA} PRIVATE /opt/rocm/lib ${CMAKE_BINARY_DIR}/bin)
+    target_compile_features(${TEST_BSA} PRIVATE cxx_std_17)
+    target_compile_definitions(${TEST_BSA} PRIVATE GGML_USE_HIP __HIP_PLATFORM_AMD__)
+endif()

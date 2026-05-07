@@ -2361,7 +2361,8 @@ extern "C" {
             struct ggml_tensor  * k,
             struct ggml_tensor  * v,
             struct ggml_tensor  * block_mask,
-            float                 scale);
+            float                 scale,
+            int32_t               n_selected);
 
     // TODO: needs to be adapted to ggml_flash_attn_ext
     GGML_API struct ggml_tensor * ggml_flash_attn_back(

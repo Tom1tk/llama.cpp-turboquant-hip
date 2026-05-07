@@ -190,6 +190,13 @@ int32_t llama_memory_hybrid::read_k_data_bulk(int32_t layer_idx, int32_t seq_id,
     return 0;
 }
 
+struct ggml_tensor * llama_memory_hybrid::get_k_tensor(int32_t layer_idx) const {
+    if (mem_attn) {
+        return mem_attn->get_k_tensor(layer_idx);
+    }
+    return nullptr;
+}
+
 void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
     if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
         mem_attn->state_write(io, seq_id, flags);

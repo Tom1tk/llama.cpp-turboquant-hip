@@ -1,4 +1,5 @@
 #include "pflash.h"
+#include "pflash-score.h"
 #include "llama.h"
 #include "log.h"
 
@@ -354,34 +355,52 @@ pflash_result pflash_compress(
     }
     res.draft_us = ggml_time_us() - t0;
 
-    // Step 4: Score blocks (on all_k, no more drafter access needed)
+    // Step 4: Score blocks (on GPU when available, CPU fallback)
     t0 = ggml_time_us();
-    const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
-    float last_len = 0.0f;
-    for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
-    last_len = std::sqrt(std::max(last_len, 1e-12f));
-
     const int32_t n_blocks = (n_tokens + params.block_size - 1) / params.block_size;
     std::vector<float> scores(n_blocks);
-    std::vector<double> mean_k_buf(kv_dim);
+    bool scored = false;
 
-    for (int32_t b = 0; b < n_blocks; b++) {
-        int32_t start = b * params.block_size;
-        int32_t end = std::min(start + params.block_size, n_tokens);
-        std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
-        for (int32_t p = start; p < end; p++) {
-            const float * kp = &all_k[(size_t)p * kv_dim];
-            for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] += kp[i];
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+    // Attempt GPU scoring: keep K on device, avoids GPU→CPU K transfer
+    struct ggml_tensor * k_tensor = llama_kv_cache_get_k_tensor(draft_ctx, score_layer);
+    if (k_tensor && k_tensor->data) {
+        int32_t n_scored = pflash_score_gpu(
+            (const float *)k_tensor->data,
+            n_tokens, kv_dim,
+            params.block_size,
+            scores.data());
+        if (n_scored == n_blocks) {
+            scored = true;
         }
-        float inv_len = 1.0f / (float)(end - start);
-        for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] *= inv_len;
+    }
+#endif
 
-        float dot = 0.0f, ml = 0.0f;
-        for (int32_t i = 0; i < kv_dim; i++) {
-            dot += (float)mean_k_buf[i] * last_k[i];
-            ml += (float)(mean_k_buf[i] * mean_k_buf[i]);
+    if (!scored) {
+        // CPU fallback: score from all_k buffer
+        const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
+        float last_len = 0.0f;
+        for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
+        last_len = std::sqrt(std::max(last_len, 1e-12f));
+
+        std::vector<double> mean_k_buf(kv_dim);
+        for (int32_t b = 0; b < n_blocks; b++) {
+            int32_t start = b * params.block_size;
+            int32_t end = std::min(start + params.block_size, n_tokens);
+            std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
+            for (int32_t p = start; p < end; p++) {
+                const float * kp = &all_k[(size_t)p * kv_dim];
+                for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] += kp[i];
+            }
+            float inv_len = 1.0f / (float)(end - start);
+            for (int32_t i = 0; i < kv_dim; i++) mean_k_buf[i] *= inv_len;
+            float dot = 0.0f, ml = 0.0f;
+            for (int32_t i = 0; i < kv_dim; i++) {
+                dot += (float)mean_k_buf[i] * last_k[i];
+                ml += (float)(mean_k_buf[i] * mean_k_buf[i]);
+            }
+            scores[b] = dot / (std::sqrt(std::max(ml, 1e-12f)) * last_len);
         }
-        scores[b] = dot / (std::sqrt(std::max(ml, 1e-12f)) * last_len);
     }
     res.score_us = ggml_time_us() - t0;
 

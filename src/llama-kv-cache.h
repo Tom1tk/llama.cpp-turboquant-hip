@@ -145,7 +145,7 @@ public:
 
     int32_t read_k_data(int32_t layer_idx, int32_t pos_idx, int32_t seq_id, float * output) const override;
     int32_t read_k_data_bulk(int32_t layer_idx, int32_t seq_id, float * output, int32_t * out_positions, int32_t max_tokens) const override;
-    ggml_tensor * get_k_tensor(int32_t layer_idx) const;
+    ggml_tensor * get_k_tensor(int32_t layer_idx) const override;
 
     //
     // llama_kv_cache specific API

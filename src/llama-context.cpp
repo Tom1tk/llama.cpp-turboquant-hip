@@ -8,7 +8,6 @@
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
-#include "llama-kv-cache.h"
 
 #include <cinttypes>
 #include <cmath>
@@ -3673,12 +3672,5 @@ struct ggml_tensor * llama_kv_cache_get_k_tensor(
     if (!ctx) return nullptr;
     auto * mem = const_cast<llama_context*>(ctx)->get_memory();
     if (!mem) return nullptr;
-
-    // Dynamic cast to llama_kv_cache* to access k_stream
-    // This is safe because only llama_kv_cache supports read_k_data (others return 0)
-    // Alternative would be adding get_k_tensor to the virtual interface, but this
-    // is simpler and follows the existing pattern.
-    struct llama_kv_cache * kv = dynamic_cast<llama_kv_cache*>(mem);
-    if (!kv) return nullptr;
-    return kv->get_k_tensor(layer_idx);
+    return mem->get_k_tensor(layer_idx);
 }

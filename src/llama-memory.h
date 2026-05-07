@@ -144,6 +144,13 @@ struct llama_memory_i {
         return 0;
     }
 
+    // Get the raw K tensor for a given layer (for direct GPU access).
+    // Returns nullptr if the layer has no KV cache.
+    virtual struct ggml_tensor * get_k_tensor(int32_t layer_idx) const {
+        (void)layer_idx;
+        return nullptr;
+    }
+
     //
     // state write/read
     //

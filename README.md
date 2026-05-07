@@ -44,9 +44,9 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 | 100k    | 67,526       | 65%  | 26.7s  | 69.9s   | 96.6s     | 126.0s   | +23%    |
 
 **Key findings:**
-- **GPU drafter:** 4.2-4.8× faster than CPU; draft time drops from 26.7s to 5.6s at 100k and 7.1s at 128k.
+- **GPU drafter:** 4.2-4.8× faster than CPU; draft time drops from 26.7s to 5.6s at 100k and 7.6s at 128k.
 - **Bulk K read** eliminates O(n²) cell lookup — draft ~10% faster on CPU, amortized on GPU.
-- **GPU scoring** (mean_K + score HIP kernels): ~1.4ms actual GPU time at 100k, 58× faster than CPU.
+- **GPU scoring** (mean_K + score HIP kernels): correct output validated against CPU baseline (16k non-chunked: 11.4ms GPU vs 13.2ms CPU). In chunked mode (> 4096 tokens), CPU scoring runs from the all_k buffer (20ms at 25k, 102ms at 128k).
 - PFlash auto-mode threshold (15k actual tokens) prevents wasting draft overhead on short prompts.
 - 128k NIAH verified: 86,416 tokens → 56,192 kept (65%), 43% speedup at 128k.
 - NIAH passes at all sizes ≥ 22k with keep_ratio=0.65 (except 20k dead zone where anchors exceed budget).

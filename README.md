@@ -17,25 +17,23 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 - `PFLASH:` parseable log line with source/kept/draft/score/select/timing breakdown
 - Slot-level tracking in `llama-server` for per-request PFlash stats
 
-## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX)
+## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX, ROCm 7.2.2)
 
 Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 tests + 7 baselines. **The optimal keep ratio is 0.65 at all context sizes where PFlash is net-positive.** Speedup grows with context:
 
 | Context | Actual Tokens | Keep | Draft  | Prefill | Eff. TTFT | Baseline | Speedup |
 |---------|--------------|------|--------|---------|-----------|----------|---------|
-| 16k     | 10,895       | 65%  | 4.2s   | 8.5s    | 12.6s     | 13.4s    | +6%     |
-| 25k     | 16,880       | 65%  | 6.4s   | 13.6s   | 19.9s     | 21.7s    | +8%     |
-| 32k     | 21,565       | 65%  | 8.3s   | 17.9s   | 26.1s     | 28.9s    | +10%    |
-| 50k     | 33,831       | 65%  | 13.1s  | 29.7s   | 42.8s     | 50.0s    | +14%    |
-| 64k     | 43,310       | 65%  | 16.8s  | 39.9s   | 56.7s     | 68.8s    | +18%    |
-| 100k    | 67,526       | 65%  | 27.1s  | 69.9s   | 97.0s     | 126.3s   | +23%    |
-
-> *v1 sweep (pre-RoPE fix). A v2 sweep with corrected cross-window K-vector scoring is pending — expected to improve quality at lower keep ratios.*
+| 16k     | 10,895       | 65%  | 4.5s   | 8.6s    | 13.1s     | 13.5s    | +3%     |
+| 25k     | 16,880       | 65%  | 6.3s   | 13.5s   | 19.8s     | 21.4s    | +7%     |
+| 32k     | 21,565       | 65%  | 8.1s   | 17.8s   | 25.9s     | 28.5s    | +9%     |
+| 50k     | 33,831       | 65%  | 12.9s  | 29.6s   | 42.5s     | 49.5s    | +14%    |
+| 64k     | 43,310       | 65%  | 16.6s  | 39.8s   | 56.4s     | 68.3s    | +17%    |
+| 100k    | 67,526       | 65%  | 26.7s  | 69.9s   | 96.6s     | 126.0s   | +23%    |
 
 **Key findings:**
-- Below ~14k actual tokens (~20k requested) the draft overhead exceeds prefill savings — PFlash auto-disables.
-- The draft model scales linearly (~0.38× token count on CPU, ~3% faster with batch alloc fix).
-- Note: 20k was the only size where NIAH failed at 65-80% (anchors + window-local RoPE caused needle block mis-scoring). The **RoPE position fix** (absolute positions across windows) resolves this — K vectors are now properly comparable across chunks.
+- Below ~15k actual tokens the draft overhead exceeds prefill savings — PFlash auto-disables at this threshold.
+- The draft model scales linearly (~0.39× token count on CPU).
+- 20k (13.6k actual tokens) is a dead zone: anchors consume too much budget; only 0.85 keep passes NIAH but is 14% slower than baseline.
 - Per-decode speed improves ~10% at 65% keep due to smaller KV cache.
 
 **Usage:**

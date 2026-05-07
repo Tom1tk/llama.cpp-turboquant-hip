@@ -27,6 +27,7 @@ FIXTURES[32768]="tools/niah/niah_32k.jsonl"
 FIXTURES[51200]="tools/niah/niah_50k.jsonl"
 FIXTURES[65536]="tools/niah/niah_64k.jsonl"
 FIXTURES[102400]="tools/niah/niah_100k.jsonl"
+FIXTURES[131072]="tools/niah/niah_128k.jsonl"
 
 QUICK="${1:-}"
 BASELINE_ONLY="${2:-}"
@@ -87,6 +88,19 @@ run_pflash_test() {
         --pflash-sink 2048 --pflash-recent 4096 \
         --pflash-threshold 0 --pflash-window 4096 \
         --pflash-layer -1)
+    local json_line=$(echo "$json" | grep '^{"answer"')
+    parse_and_log "$ctx" "$kr" "$json_line" 0
+}
+
+run_bsa_test() {
+    local ctx=$1 kr=$2 fix=$3
+    local json
+    json=$(run_niah "$ctx" "$fix" 1 \
+        --pflash-keep-ratio "$kr" \
+        --pflash-block-size 128 \
+        --pflash-sink 1024 --pflash-recent 1024 \
+        --pflash-threshold 0 --pflash-window 0 \
+        --pflash-bsa --pflash-layer -1)
     local json_line=$(echo "$json" | grep '^{"answer"')
     parse_and_log "$ctx" "$kr" "$json_line" 0
 }

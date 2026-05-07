@@ -269,6 +269,7 @@ private:
 
     ggml_context_ptr bsa_mask_ctx;
     ggml_tensor     * bsa_block_mask = nullptr;
+    ggml_backend_buffer_ptr bsa_mask_buf;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     buffer_view<float> logits = {nullptr, 0};

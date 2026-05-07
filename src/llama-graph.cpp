@@ -1859,7 +1859,10 @@ ggml_tensor * llm_graph_context::build_attn_mha(
     ggml_tensor * cur;
 
     // PFlash BSA: block-sparse attention (drafter prefill only)
-    if (cparams.use_pflash_bsa && bsa_block_mask != nullptr) {
+    if (cparams.use_pflash_bsa && bsa_block_mask != nullptr && cparams.bsa_n_selected > 0) {
+        if (q->type != GGML_TYPE_F32) {
+            q = ggml_cast(ctx0, q, GGML_TYPE_F32);
+        }
         if (k->type == GGML_TYPE_F16) {
             k = ggml_cast(ctx0, k, GGML_TYPE_F32);
         }

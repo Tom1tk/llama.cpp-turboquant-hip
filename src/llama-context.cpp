@@ -180,7 +180,14 @@ llama_context::llama_context(
             auto dev_type = ggml_backend_dev_type(ggml_backend_get_device(backend.get()));
             if (dev_type == GGML_BACKEND_DEVICE_TYPE_GPU) {
                 auto * gpu_buft = ggml_backend_get_default_buffer_type(backend.get());
-                ggml_backend_alloc_ctx_tensors_from_buft(bsa_mask_ctx.get(), gpu_buft);
+                auto * buf = ggml_backend_alloc_ctx_tensors_from_buft(bsa_mask_ctx.get(), gpu_buft);
+                if (buf) {
+                    bsa_mask_buf.reset(buf);
+                } else {
+                    LLAMA_LOG_WARN("%s: failed to allocate BSA mask buffer on GPU, disabling BSA\n", __func__);
+                    bsa_block_mask = nullptr;
+                    cparams.use_pflash_bsa = false;
+                }
                 break;
             }
         }
@@ -1085,7 +1092,7 @@ void llama_context::set_warmup(bool value) {
 }
 
 void llama_context::set_pflash_bsa_mask(const int32_t * block_indices, int32_t n_selected) {
-    if (!bsa_block_mask || n_selected <= 0 || n_selected > bsa_block_mask->ne[0]) {
+    if (!bsa_block_mask || !bsa_block_mask->data || n_selected <= 0 || n_selected > bsa_block_mask->ne[0]) {
         return;
     }
 

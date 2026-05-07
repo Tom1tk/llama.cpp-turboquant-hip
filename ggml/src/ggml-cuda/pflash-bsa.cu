@@ -21,6 +21,8 @@ static __global__ void pflash_bsa_single_query(
     int n_heads_kv,
     int q_stride,
     int q_head_stride,
+    int o_stride,
+    int o_head_stride,
     int kv_stride,
     int kv_head_stride,
     int head_dim)
@@ -33,7 +35,7 @@ static __global__ void pflash_bsa_single_query(
 
     const float * Q_head = Q + (size_t)q_pos * q_stride + (size_t)h * q_head_stride;
 
-    __shared__ float sdata[BSA_BLOCK_SIZE];
+    __shared__ float sdata[256];
 
     float O_reg[D / 128 + 1] = {0.0f};
 
@@ -84,7 +86,7 @@ static __global__ void pflash_bsa_single_query(
     }
 
     float inv_l = 1.0f / fmaxf(l_i, 1e-12f);
-    float * o_row = O + (size_t)q_pos * q_stride + (size_t)h * q_head_stride;
+    float * o_row = O + (size_t)q_pos * o_stride + (size_t)h * o_head_stride;
     for (int d = tid; d < D; d += blockDim.x) {
         o_row[d] = O_reg[d / blockDim.x] * inv_l;
     }
@@ -107,6 +109,8 @@ int32_t pflash_bsa_forward(
     int head_dim,
     int q_stride,
     int q_head_stride,
+    int o_stride,
+    int o_head_stride,
     int kv_stride,
     int kv_head_stride)
 {
@@ -126,21 +130,21 @@ int32_t pflash_bsa_forward(
                 dim3(n_q, n_heads), dim3(threads_p2), 0, 0,
                 d_Q, d_K, d_V, d_block_mask, n_selected, d_O, scale,
                 n_kv, n_heads, n_heads_kv, q_stride, q_head_stride,
-                kv_stride, kv_head_stride, head_dim);
+                o_stride, o_head_stride, kv_stride, kv_head_stride, head_dim);
             break;
         case 128:
             hipLaunchKernelGGL((pflash_bsa_single_query<128>),
                 dim3(n_q, n_heads), dim3(threads_p2), 0, 0,
                 d_Q, d_K, d_V, d_block_mask, n_selected, d_O, scale,
                 n_kv, n_heads, n_heads_kv, q_stride, q_head_stride,
-                kv_stride, kv_head_stride, head_dim);
+                o_stride, o_head_stride, kv_stride, kv_head_stride, head_dim);
             break;
         case 256:
             hipLaunchKernelGGL((pflash_bsa_single_query<256>),
                 dim3(n_q, n_heads), dim3(threads_p2), 0, 0,
                 d_Q, d_K, d_V, d_block_mask, n_selected, d_O, scale,
                 n_kv, n_heads, n_heads_kv, q_stride, q_head_stride,
-                kv_stride, kv_head_stride, head_dim);
+                o_stride, o_head_stride, kv_stride, kv_head_stride, head_dim);
             break;
         default:
             return -1;
@@ -175,11 +179,12 @@ void ggml_cuda_pflash_bsa_attn(ggml_backend_cuda_context & ctx, ggml_tensor * ds
     float scale;
     memcpy(&scale, dst->op_params, sizeof(float));
 
-    // n_selected is in op_params[1] (as float, cast back to int)
     int n_selected = (int)ggml_get_op_params_f32(dst, 1);
 
     const int q_stride       = q->nb[1] / sizeof(float);
     const int q_head_stride  = q->nb[2] / sizeof(float);
+    const int o_stride       = dst->nb[2] / sizeof(float);
+    const int o_head_stride  = dst->nb[1] / sizeof(float);
     const int kv_stride      = k->nb[1] / sizeof(float);
     const int kv_head_stride = k->nb[2] / sizeof(float);
 
@@ -187,7 +192,7 @@ void ggml_cuda_pflash_bsa_attn(ggml_backend_cuda_context & ctx, ggml_tensor * ds
         (const float*)q->data, (const float*)k->data, (const float*)v->data,
         (const int*)block_mask->data, n_selected,
         (float*)dst->data, scale, n_heads, n_heads_kv, n_q, n_kv, head_dim,
-        q_stride, q_head_stride, kv_stride, kv_head_stride);
+        q_stride, q_head_stride, o_stride, o_head_stride, kv_stride, kv_head_stride);
 
     GGML_ASSERT(hipGetLastError() == hipSuccess);
 }

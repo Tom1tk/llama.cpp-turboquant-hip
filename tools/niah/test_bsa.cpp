@@ -17,7 +17,8 @@ int32_t pflash_bsa_forward(
     const int * d_block_mask, int n_selected,
     float * d_O, float scale,
     int n_heads, int n_heads_kv, int n_q, int n_kv, int head_dim,
-    int q_stride, int q_head_stride, int kv_stride, int kv_head_stride);
+    int q_stride, int q_head_stride, int o_stride, int o_head_stride,
+    int kv_stride, int kv_head_stride);
 }
 #endif
 
@@ -95,11 +96,11 @@ int main(int argc, char ** argv) {
 
     printf("=== BSA Kernel Unit Test ===\n");
 
-    const int D = 64;         // head_dim
+    const int D = 256;        // head_dim (matching Qwen3.5-0.8B)
     const int n_q = 16;       // query tokens
     const int n_kv = 256;     // KV tokens
-    const int n_heads = 8;    // attention heads (no GQA for simplicity)
-    const int n_heads_kv = 8;
+    const int n_heads = 8;    // attention heads
+    const int n_heads_kv = 8; // no GQA for unit test (CPU reference doesn't handle GQA)
     const float attn_scale = 1.0f / sqrtf((float)D);
 
     const int BSA_BLOCK = 128;
@@ -148,7 +149,8 @@ int main(int argc, char ** argv) {
     int ret = pflash_bsa_forward(
         d_Q, d_K, d_V, d_mask, n_blocks, d_O, attn_scale,
         n_heads, n_heads_kv, n_q, n_kv, D,
-        q_stride, q_head_stride, kv_stride, kv_head_stride);
+        q_stride, q_head_stride, q_stride, q_head_stride,
+        kv_stride, kv_head_stride);
 
     if (ret != 0) {
         fprintf(stderr, "FAIL: pflash_bsa_forward returned %d\n", ret);

@@ -72,6 +72,15 @@ llama-server \
   --pflash-window 4096 \
   --pflash-block-size 128 \
   --pflash-layer -1
+
+# BSA mode (block-sparse attention for draft prefill, ≤ 32k)
+llama-niah \
+  --model model.gguf \
+  --draft draft.gguf \
+  --pflash-keep-ratio 0.65 \
+  --pflash-sink 1024 --pflash-recent 1024 \
+  --pflash-threshold 0 --pflash-window 0 \
+  --pflash-bsa
 ```
 
 ## Roadmap
@@ -97,14 +106,25 @@ Eliminated O(n²) cell lookup with `llama_kv_cache_read_k_bulk()` (single-pass v
 **Phase 5B — GPU scoring kernels** ✓
 `mean_K` + `score` HIP kernels in `pflash-score.cu`. Scores computed on-device from raw K tensor, no GPU→CPU K transfer. 58× faster than CPU at 100k (1.4ms GPU vs 82ms CPU). CPU fallback preserved. Exit: scoring < 10ms at 100k (1.4ms ✓).
 
-**Phase 5C — BSA HIP kernel** ✓ (kernel created, integration pending)
-`pflash-bsa.cu` — block-sparse attention forward kernel with online softmax. Single-query mode active (sufficient for PFlash scoring). Full FA2 replacement (ggml op registration) deferred to Phase 5D.
+**Phase 5C — BSA HIP kernel + ggml integration** ✓
+`pflash-bsa.cu` — block-sparse attention kernel with online softmax. Single-query mode with `dim3(n_q, n_heads)` 2D grid. Registered as `GGML_OP_PFLASH_BSA_ATTN` in ggml op dispatch chain. Unit-tested (max rel error 7.9e-5 @ D=256).
 
-**Phase 5D — 128k unlock** ✓ (verified via windowed GPU drafter)
-128k NIAH verified with windowed GPU drafter: 86,416 tokens → 56,192 kept (65% keep, 35% compression). 180.7s baseline → 96.5s with PFlash (+43% speedup). BSA integration would further reduce draft from 7.1s to ~3s.
+**Phase 5D — BSA E2E integration + 128k unlock** ✓
+BSA wired into `build_attn_mha` graph builder for drafter prefill. Mask stored on GPU backend via `ggml_backend_alloc_ctx_tensors_from_buft`. `--pflash-window 0 --pflash-bsa` runs single-pass BSA drafter with 16-block mask (1024 sink + 1024 recent = 16 blocks of 128 tokens). E2E NIAH verified at 16k-128k.
 
-**Phase 5E — Tuning & validation** (partial)
-GPU drafter + bulk read + GPU scoring fully operational. BSA kernel compiled but not yet integrated into drafter forward path (requires ggml op registration).
+**Phase 5E — Tuning & validation** (current)
+GPU drafter + bulk read + GPU scoring + BSA kernel fully operational and E2E tested.
+
+| Context | Mode         | Draft   | TTFT    | Speedup vs BL |
+|---------|-------------|---------|---------|---------------|
+| 16k     | BSA single  | 1.09s   | 8.05s   | +40%  |
+| 32k     | BSA single  | 2.50s   | 17.1s   | +40%  |
+| 128k    | BSA single  | 19.9s   | 96.1s   | +47%  |
+| 16k     | Windowed    | 0.97s   | 8.57s   | +36%  |
+| 32k     | Windowed    | 5.1s    | 17.3s   | +39%  |
+| 128k    | Windowed    | 7.12s   | 96.5s   | +43%  |
+
+Note: BSA single-pass is faster than windowed at 32k (2.5s vs 5.1s draft) but slower at 128k (19.9s vs 7.1s) due to quadratic scaling. Windowed mode is the recommended default. Use `--pflash-window 0 --pflash-bsa` for single-pass with small mask at ≤ 32k.
 
 ---
 

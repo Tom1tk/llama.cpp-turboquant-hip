@@ -1,0 +1,298 @@
+# PFlash codebase semantic test questions
+# All questions verified at 100% keep ratio before inclusion
+
+# --- TYPE A: DEFINITION LOOKUP ---
+
+- id: A1
+  type: A
+  difficulty: easy
+  question: >
+    The file ggml/src/ggml-cuda/pflash-bsa.cu defines a templated GPU kernel.
+    What are the three integer values of the template parameter D that have
+    explicit kernel instantiations in this file?
+  expected_substrings: ["64", "128", "256"]
+  min_recovered: 3
+  answer_files: ["ggml/src/ggml-cuda/pflash-bsa.cu"]
+
+- id: A2
+  type: A
+  difficulty: easy
+  question: >
+    In include/pflash.h, what is the default value assigned to the keep_ratio
+    field of pflash_params?
+  expected_substrings: ["0.75"]
+  min_recovered: 1
+  answer_files: ["include/pflash.h"]
+
+- id: A3
+  type: A
+  difficulty: easy
+  question: >
+    In src/llama-cparams.h, what default value is given to bsa_n_selected
+    and what is the comment that appears near it?
+  expected_substrings: ["0", "bsa_n_selected", "current mask element count"]
+  min_recovered: 2
+  answer_files: ["src/llama-cparams.h"]
+
+- id: A4
+  type: A
+  difficulty: easy
+  question: >
+    In ggml/include/ggml.h, what is the name of the enum value added for
+    the PFlash block-sparse attention operation?
+  expected_substrings: ["GGML_OP_PFLASH_BSA_ATTN"]
+  min_recovered: 1
+  answer_files: ["ggml/include/ggml.h"]
+
+- id: A5
+  type: A
+  difficulty: easy
+  question: >
+    In include/pflash.h, what two boolean fields were added to pflash_params
+    for the Phase 5E auto-mode features?
+  expected_substrings: ["keep_ratio_auto", "use_bsa"]
+  min_recovered: 2
+  answer_files: ["include/pflash.h"]
+
+# --- TYPE B: CROSS-REFERENCE ---
+
+- id: B1
+  type: B
+  difficulty: medium
+  question: >
+    The method set_pflash_bsa_mask is declared in src/llama-context.h.
+    In its implementation in src/llama-context.cpp, what two operations does
+    it perform after the null/bounds check? Name the field it updates in
+    llama_cparams and the ggml function it calls to transfer data.
+  expected_substrings: ["bsa_n_selected", "ggml_backend_tensor_set"]
+  min_recovered: 2
+  answer_files: ["src/llama-context.h", "src/llama-context.cpp"]
+
+- id: B2
+  type: B
+  difficulty: medium
+  question: >
+    In tools/niah/niah.cpp, the --pflash-bsa flag sets a boolean in niah_params.
+    What is the exact name of that niah_params field, and what pflash_params
+    field does it map to when pparams is populated before calling pflash_compress?
+  expected_substrings: ["pflash_bsa", "use_bsa", "pparams"]
+  min_recovered: 2
+  answer_files: ["tools/niah/niah.cpp", "include/pflash.h"]
+
+- id: B3
+  type: B
+  difficulty: medium
+  question: >
+    ggml_pflash_bsa_attn is implemented in ggml/src/ggml.c. How many floats
+    does it store in op_params, what are their names, and in what order?
+  expected_substrings: ["scale", "n_selected", "2", "op_params"]
+  min_recovered: 3
+  answer_files: ["ggml/src/ggml.c", "ggml/include/ggml.h"]
+
+- id: B4
+  type: B
+  difficulty: medium
+  question: >
+    In src/llama-graph.cpp, the BSA branch in build_attn_mha guards the
+    ggml_pflash_bsa_attn call with three conditions. What are all three?
+  expected_substrings: ["use_pflash_bsa", "bsa_block_mask != nullptr", "bsa_n_selected > 0"]
+  min_recovered: 3
+  answer_files: ["src/llama-graph.cpp", "src/llama-cparams.h"]
+
+- id: B5
+  type: B
+  difficulty: medium
+  question: >
+    In ggml/src/ggml-cuda/ggml-cuda.cu, how is the PFLASH_BSA_ATTN operation
+    dispatched, and what function handles the supports_op check for it?
+  expected_substrings: ["ggml_cuda_pflash_bsa_attn", "ggml_cuda_pflash_bsa_attn_supported", "GGML_OP_PFLASH_BSA_ATTN"]
+  min_recovered: 2
+  answer_files: ["ggml/src/ggml-cuda/ggml-cuda.cu", "ggml/src/ggml-cuda/pflash-bsa.cuh"]
+
+- id: B6
+  type: B
+  difficulty: hard
+  question: >
+    In ggml/src/ggml-cuda/pflash-bsa.cu, the ggml_cuda_pflash_bsa_attn wrapper
+    extracts n_selected from op_params rather than from block_mask->ne[0].
+    Which commit introduced this change and why? What problem does it solve?
+  expected_substrings: ["op_params", "n_selected", "graph reuse", "ne[0]"]
+  min_recovered: 2
+  answer_files: ["ggml/src/ggml-cuda/pflash-bsa.cu", "ggml/src/ggml.c"]
+
+# --- TYPE C: CALL CHAIN TRACE ---
+
+- id: C1
+  type: C
+  difficulty: hard
+  question: >
+    Trace the complete execution path from when --pflash-bsa is parsed in
+    tools/niah/niah.cpp to when hipLaunchKernelGGL is called in
+    ggml/src/ggml-cuda/pflash-bsa.cu. List every function name in execution
+    order, one per line.
+  expected_substrings:
+    - "pflash_init_draft"
+    - "cparams.use_pflash_bsa"
+    - "build_attn_mha"
+    - "ggml_pflash_bsa_attn"
+    - "ggml_cuda_pflash_bsa_attn"
+    - "pflash_bsa_forward"
+    - "hipLaunchKernelGGL"
+  min_recovered: 5
+  answer_files:
+    - "tools/niah/niah.cpp"
+    - "tools/niah/pflash.cpp"
+    - "src/llama-context.cpp"
+    - "src/llama-graph.cpp"
+    - "ggml/src/ggml-cuda/ggml-cuda.cu"
+    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+
+- id: C2
+  type: C
+  difficulty: hard
+  question: >
+    When llama_set_pflash_bsa_mask is called in tools/niah/pflash.cpp,
+    trace how the block index data physically moves from the CPU vector in
+    pflash_compress to the GPU device memory that the BSA kernel reads.
+    Name each function and data structure involved.
+  expected_substrings:
+    - "llama_set_pflash_bsa_mask"
+    - "set_pflash_bsa_mask"
+    - "ggml_backend_tensor_set"
+    - "bsa_block_mask"
+    - "block_mask->data"
+  min_recovered: 4
+  answer_files:
+    - "tools/niah/pflash.cpp"
+    - "src/llama-context.cpp"
+    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+
+- id: C3
+  type: C
+  difficulty: hard
+  question: >
+    Trace how keep_ratio reaches pflash_select. Starting from where the user
+    sets --pflash-keep-ratio in the CLI, name every struct field and function
+    it passes through before reaching the keep_ratio parameter of pflash_select.
+  expected_substrings:
+    - "pflash_keep_ratio"
+    - "pparams.keep_ratio"
+    - "pflash_compress"
+    - "keep_ratio"
+    - "pflash_select"
+  min_recovered: 4
+  answer_files:
+    - "tools/niah/niah.cpp"
+    - "include/pflash.h"
+    - "tools/niah/pflash.cpp"
+
+# --- TYPE D: IMPACT ANALYSIS ---
+
+- id: D1
+  type: D
+  difficulty: hard
+  question: >
+    If BSA_BLOCK_SIZE is changed from 128 to 256, identify every location in
+    the codebase that would produce incorrect results or need updating.
+    Be specific about file names and the nature of each required change.
+  expected_substrings:
+    - "pflash-bsa.cu"
+    - "pflash.cpp"
+    - "BSA_BLOCK_SIZE"
+    - "n_sink_b"
+    - "n_local_b"
+  min_recovered: 4
+  answer_files:
+    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+    - "tools/niah/pflash.cpp"
+
+- id: D2
+  type: D
+  difficulty: hard
+  question: >
+    If a third parameter (say, n_heads_kv as an int32) is added to
+    ggml_pflash_bsa_attn's op_params, which files must change and what
+    specific change is required in each?
+  expected_substrings:
+    - "ggml.c"
+    - "ggml-cuda.cu"
+    - "pflash-bsa.cu"
+    - "op_params"
+    - "ggml_get_op_params_f32"
+  min_recovered: 4
+  answer_files:
+    - "ggml/src/ggml.c"
+    - "ggml/src/ggml-cuda/ggml-cuda.cu"
+    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+
+# --- TYPE E: ANOMALY DETECTION ---
+
+- id: E1
+  type: E
+  difficulty: hard
+  question: >
+    Examine how sink_tokens and recent_tokens from pflash_params are used
+    in tools/niah/pflash.cpp when constructing the BSA block mask (both in
+    pflash_compress and pflash_process_window). Compare this to how these
+    same fields are used in pflash_select. Is there an inconsistency?
+    Describe it precisely.
+  expected_substrings:
+    - "n_sink_b = 16"
+    - "n_local_b = 32"
+    - "params.sink_tokens"
+    - "hardcoded"
+  min_recovered: 2
+  answer_files: ["tools/niah/pflash.cpp", "include/pflash.h"]
+
+- id: E2
+  type: E
+  difficulty: hard
+  question: >
+    In tools/niah/pflash.cpp, GPU scoring (pflash_score_gpu) is guarded by
+    a condition involving use_chunked. Explain why this guard is necessary
+    and what would go wrong if it were removed and GPU scoring ran in chunked
+    mode.
+  expected_substrings:
+    - "use_chunked"
+    - "k_tensor"
+    - "cell"
+    - "last window"
+  min_recovered: 2
+  answer_files: ["tools/niah/pflash.cpp"]
+
+- id: E3
+  type: E
+  difficulty: medium
+  question: >
+    In tools/niah/test_bsa.cpp, the BSA unit test calls pflash_bsa_forward
+    directly rather than going through the ggml graph path. What category of
+    real bug affecting production use would this test approach systematically
+    fail to detect? Give a concrete example of such a bug from the commit
+    history of this repository.
+  expected_substrings:
+    - "ggml wrapper"
+    - "strides"
+    - "o_stride"
+    - "e4b4ccc"
+  min_recovered: 2
+  answer_files:
+    - "tools/niah/test_bsa.cpp"
+    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+
+- id: E4
+  type: E
+  difficulty: medium
+  question: >
+    The bsa_auto_threshold in include/pflash.h defaults to 50000 actual tokens.
+    Looking at the Phase 5E benchmark table in README.md, identify the specific
+    context size where this threshold produces a suboptimal mode selection,
+    and explain why.
+  expected_substrings:
+    - "50k"
+    - "33831"
+    - "windowed"
+    - "BSA"
+  min_recovered: 2
+  answer_files:
+    - "include/pflash.h"
+    - "README.md"

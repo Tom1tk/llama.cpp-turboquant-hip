@@ -22,6 +22,8 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 - Slot-level tracking in `llama-server` for per-request PFlash stats
 - Context-adaptive keep ratio: auto-adjusts based on prompt size
 - BSA vs windowed auto-mode: picks the right strategy per context length
+- `--pflash-min-score-budget N` — skip draft when scoring adds < N tokens beyond anchors (0=off)
+- Semantic code tests: 20 hand-authored questions across 5 types (A–E) on the PFlash repo itself
 
 ## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX, ROCm 7.2.2)
 
@@ -146,6 +148,23 @@ on single equivocal data point at 50k/34k actual). The default `bsa_auto_thresho
 means auto-mode is enabled by default — set to 0 for manual control.
 Adaptive keep ratio (`--pflash-keep-auto`) uses 0.80 below 25k, 0.70 to 64k,
 0.65 above 64k — preventing anchor-dominated budgets at small contexts.
+
+**Phase 7 — Semantic code tests** (in development)
+PFlash quality validation on real code comprehension tasks using the PFlash repo
+itself as the test corpus (92k tokens, 16 files). 20 hand-authored questions across
+5 types: definition lookup (A), cross-reference (B), call chain trace (C), impact
+analysis (D), and anomaly detection (E). Structure:
+
+```
+tools/niah/pack_code_context.py   # assemble source files into NIAH context
+tools/niah/gen_code_fixtures.py   # generate fixtures from question library
+tools/niah/questions.yaml         # question library (20 questions, types A–E)
+tools/niah/run_phase7.sh          # batch: pack → baseline → sweep → type-E
+```
+
+Baseline protocol: every question must pass at 100% keep before PFlash evaluation.
+Fixtures generated at 32k/64k/96k with shuffle ordering and mid-answer variants
+(answers in middle 33–67% of context — hardest for PFlash anchor bias).
 
 ---
 

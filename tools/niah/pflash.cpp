@@ -314,10 +314,32 @@ pflash_result pflash_compress(
         return res;
     }
 
+    // Compute adaptive keep ratio
+    float keep_ratio = params.keep_ratio;
+    if (params.keep_ratio_auto) {
+        int32_t n = (int32_t)tokens.size();
+        if (n < 25600) {
+            keep_ratio = 0.80f;
+        } else if (n < 65536) {
+            keep_ratio = 0.70f;
+        } else {
+            keep_ratio = 0.65f;
+        }
+    }
+
+    // Compute effective window size for auto-mode
+    int32_t effective_window = params.window_size;
+    if (params.use_bsa && params.bsa_auto_threshold > 0) {
+        if ((int32_t)tokens.size() <= params.bsa_auto_threshold) {
+            effective_window = 0;  // BSA single-pass
+        }
+        // else: use params.window_size (user-specified, e.g. 4096 for windowed)
+    }
+
     // Step 1: Run first window through drafter to populate KV cache for probing
     int64_t t0 = ggml_time_us();
     int32_t n_tokens = (int32_t)tokens.size();
-    int32_t win = params.window_size > 0 ? std::min(params.window_size, n_tokens) : n_tokens;
+    int32_t win = effective_window > 0 ? std::min(effective_window, n_tokens) : n_tokens;
     int32_t probe_n = std::min(win, n_tokens);
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
@@ -400,7 +422,7 @@ pflash_result pflash_compress(
     }
 
     // Process remaining windows
-    const bool use_chunked = params.window_size > 0 && n_tokens > params.window_size;
+    const bool use_chunked = effective_window > 0 && n_tokens > effective_window;
     if (use_chunked) {
         for (int32_t offset = win; offset < n_tokens; offset += win) {
             int32_t n_win = std::min(win, n_tokens - offset);
@@ -494,7 +516,7 @@ pflash_result pflash_compress(
     auto spans = pflash_select(
         scores, params.block_size, n_tokens,
         params.sink_tokens, params.recent_tokens,
-        params.keep_ratio, params.min_keep_tokens);
+        keep_ratio, params.min_keep_tokens);
     res.select_us = ggml_time_us() - t0;
 
     // Step 7: Gather tokens

@@ -14,9 +14,14 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 - `--pflash-block-size` — scoring block granularity (default 128)
 - `--pflash-layer` — scoring layer override (default: auto-detect first attention layer)
 - `--pflash-draft-gpu-layers` — GPU layers for draft model (default: -1 = all on GPU)
+- `--pflash-bsa` — use block-sparse attention in drafter prefill
+- `--pflash-bsa-auto N` — auto-select BSA single-pass for n_tokens ≤ N (default: 0 = manual)
+- `--pflash-keep-auto` — adaptive keep ratio by context size (0.80 small / 0.70 mid / 0.65 large)
 - Built-in NIAH (Needle-In-A-Haystack) benchmark harness (`llama-niah`)
 - `PFLASH:` parseable log line with source/kept/draft/score/select/timing breakdown
 - Slot-level tracking in `llama-server` for per-request PFlash stats
+- Context-adaptive keep ratio: auto-adjusts based on prompt size
+- BSA vs windowed auto-mode: picks the right strategy per context length
 
 ## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX, ROCm 7.2.2)
 
@@ -73,13 +78,21 @@ llama-server \
   --pflash-block-size 128 \
   --pflash-layer -1
 
-# BSA mode (block-sparse attention for draft prefill, ≤ 32k)
+# BSA mode (block-sparse attention for draft prefill, ≤ 64k)
 llama-niah \
   --model model.gguf \
   --draft draft.gguf \
   --pflash-keep-ratio 0.65 \
   --pflash-sink 1024 --pflash-recent 1024 \
   --pflash-threshold 0 --pflash-window 0 \
+  --pflash-bsa
+
+# Auto-mode: automatic BSA/windowed selection + adaptive keep ratio
+llama-niah \
+  --model model.gguf \
+  --draft draft.gguf \
+  --pflash-keep-auto \
+  --pflash-bsa-auto 50000 \
   --pflash-bsa
 ```
 
@@ -112,19 +125,25 @@ Eliminated O(n²) cell lookup with `llama_kv_cache_read_k_bulk()` (single-pass v
 **Phase 5D — BSA E2E integration + 128k unlock** ✓
 BSA wired into `build_attn_mha` graph builder for drafter prefill. Mask stored on GPU backend via `ggml_backend_alloc_ctx_tensors_from_buft`. `--pflash-window 0 --pflash-bsa` runs single-pass BSA drafter with 16-block mask (1024 sink + 1024 recent = 16 blocks of 128 tokens). E2E NIAH verified at 16k-128k.
 
-**Phase 5E — Tuning & validation** (current)
+**Phase 5E — Tuning & validation** ✓
 GPU drafter + bulk read + GPU scoring + BSA kernel fully operational and E2E tested.
+All NIAH PASS at keep_ratio=0.65. Auto-mode (`--pflash-bsa-auto`) and adaptive
+keep ratio (`--pflash-keep-auto`) implemented for production use.
 
-| Context | Mode         | Draft   | TTFT    | Speedup vs BL |
-|---------|-------------|---------|---------|---------------|
-| 16k     | BSA single  | 1.09s   | 8.05s   | +40%  |
-| 32k     | BSA single  | 2.50s   | 17.1s   | +40%  |
-| 128k    | BSA single  | 19.9s   | 96.1s   | +47%  |
-| 16k     | Windowed    | 0.97s   | 8.57s   | +36%  |
-| 32k     | Windowed    | 5.1s    | 17.3s   | +39%  |
-| 128k    | Windowed    | 7.12s   | 96.5s   | +43%  |
+| Context | Tokens | BSA draft | BSA TTFT | WIN draft | WIN TTFT | TTFT Δ |
+|---------|--------|-----------|----------|-----------|----------|--------|
+| 16k     | 10,895 | 1.09s     | 8.05s    | 0.97s     | 8.57s    | BSA -0.5s |
+| 32k     | 21,565 | 2.50s     | 17.1s    | 5.10s     | 17.3s    | BSA -0.2s |
+| 50k     | 33,831 | 4.51s     | 29.2s    | 2.83s     | 29.1s    | tie     |
+| 64k     | 43,310 | 6.48s     | 39.6s    | 3.64s     | 39.7s    | BSA -0.1s |
+| 128k    | 86,416 | 19.9s     | 96.1s    | 7.12s     | 96.5s    | BSA -0.4s |
 
-Note: BSA single-pass is faster than windowed at 32k (2.5s vs 5.1s draft) but slower at 128k (19.9s vs 7.1s) due to quadratic scaling. Windowed mode is the recommended default. Use `--pflash-window 0 --pflash-bsa` for single-pass with small mask at ≤ 32k.
+Note: BSA single-pass wins on TTFT at all measured contexts (16k-128k) but the
+margin narrows above 32k. Windowed mode wins on draft time above 50k (2.8x faster
+at 128k). Auto-mode (`--pflash-bsa-auto 40000 --pflash-bsa`) selects BSA below
+40k actual tokens and windowed above, based on crossover data from 16k-128k sweep.
+Adaptive keep ratio (`--pflash-keep-auto`) uses 0.80 below 25k, 0.70 to 64k,
+0.65 above 64k — preventing anchor-dominated budgets at small contexts.
 
 ---
 

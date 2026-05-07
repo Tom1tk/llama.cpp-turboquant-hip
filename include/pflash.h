@@ -43,6 +43,17 @@ struct pflash_params {
 
     // Use Block-Sparse Attention for drafter (Phase 5C+)
     bool use_bsa = false;
+
+    // Auto-mode: BSA single-pass if n_tokens <= threshold, windowed otherwise
+    // 0 = manual (user controls window_size directly)
+    int32_t bsa_auto_threshold = 0;
+
+    // Adaptive keep ratio: auto-adjust based on context size
+    // When true, keep_ratio is derived from context size bands:
+    //   n < 25k → 0.80   (anchors dominate; scoring barely activates)
+    //   n < 64k → 0.70   (moderate scoring utility)
+    //   n ≥ 64k → 0.65   (full scoring benefit)
+    bool keep_ratio_auto = false;
 };
 
 struct pflash_span {

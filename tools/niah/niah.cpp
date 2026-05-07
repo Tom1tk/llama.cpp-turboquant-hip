@@ -49,6 +49,8 @@ struct niah_params {
     std::string draft_cache_type_k = "f16";
     std::string draft_cache_type_v = "f16";
     bool pflash_bsa = false;
+    int32_t pflash_bsa_auto_threshold = 0;
+    bool pflash_keep_ratio_auto = false;
 };
 
 struct niah_fixture {
@@ -112,6 +114,8 @@ static void print_usage() {
     fprintf(stdout, "  --pflash-window <n>     chunk window size for drafter (default: 4096, 0=full)\n");
     fprintf(stdout, "  --pflash-draft-gpu-layers <n> GPU layers for draft model (-1 = all, default: -1)\n");
     fprintf(stdout, "  --pflash-bsa            use block-sparse attention in drafter\n");
+    fprintf(stdout, "  --pflash-bsa-auto N     auto-select BSA single-pass for n_tokens <= N (default: 0=off)\n");
+    fprintf(stdout, "  --pflash-keep-auto      adaptive keep ratio by context size\n");
     fprintf(stdout, "  --draft-cache-k <type>  drafter K cache type (default: f16)\n");
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
@@ -250,6 +254,8 @@ static niah_result run_fixture(
         pparams.score_layer = params.pflash_score_layer;
         pparams.window_size = params.pflash_window_size;
         pparams.use_bsa = params.pflash_bsa;
+        pparams.bsa_auto_threshold = params.pflash_bsa_auto_threshold;
+        pparams.keep_ratio_auto = params.pflash_keep_ratio_auto;
 
         auto presult = pflash_compress(draft_ctx, tokens, pparams);
         res.pflash_bypassed = presult.bypassed;
@@ -490,6 +496,10 @@ int main(int argc, char **argv) {
             params.pflash_draft_gpu_layers = std::stoi(args[++i]);
         } else if (arg == "--pflash-bsa") {
             params.pflash_bsa = true;
+        } else if (arg == "--pflash-bsa-auto" && i + 1 < args.size()) {
+            params.pflash_bsa_auto_threshold = std::stoi(args[++i]);
+        } else if (arg == "--pflash-keep-auto") {
+            params.pflash_keep_ratio_auto = true;
         } else if (arg == "--draft-cache-k" && i + 1 < args.size()) {
             params.draft_cache_type_k = args[++i];
         } else if (arg == "--draft-cache-v" && i + 1 < args.size()) {

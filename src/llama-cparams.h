@@ -31,7 +31,7 @@ struct llama_cparams {
     bool offload_kqv;
     bool flash_attn;
     bool auto_fa;
-    bool use_pflash_bsa;
+    bool use_pflash_bsa = false;
     int  bsa_block_size;
     int  bsa_n_sink_blocks;
     int  bsa_n_local_blocks;

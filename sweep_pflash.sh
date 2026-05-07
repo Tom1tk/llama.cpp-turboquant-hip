@@ -128,9 +128,9 @@ done
 
 [ "$BASELINE_ONLY" = "--baseline-only" ] && exit 0
 
-# ============= SWEEP =============
+# ============= WINDOWED SWEEP =============
 echo ""
-echo "=== PFLASH SWEEP ==="
+echo "=== PFLASH WINDOWED SWEEP ==="
 
 if [ "$QUICK" = "--quick" ]; then
     SIZES=(16384 20480)
@@ -147,6 +147,26 @@ for CTX in "${SIZES[@]}"; do
         COUNT=$((COUNT+1))
         echo -n "[$COUNT/$TOTAL] "
         run_pflash_test "$CTX" "$KR" "$FIX"
+    done
+done
+
+# ============= BSA SWEEP =============
+echo ""
+echo "=== BSA SINGLE-PASS SWEEP ==="
+
+if [ "$QUICK" = "--quick" ]; then
+    BSA_SIZES=(16384 32768)
+else
+    BSA_SIZES=(16384 25600 32768 51200 65536 102400)
+fi
+BSA_RATIOS=(0.65 0.70 0.75)
+
+for CTX in "${BSA_SIZES[@]}"; do
+    [ -z "${FIXTURES[$CTX]:-}" ] && continue
+    FIX="${FIXTURES[$CTX]}"
+    for KR in "${BSA_RATIOS[@]}"; do
+        echo -n "[BSA] "
+        run_bsa_test "$CTX" "$KR" "$FIX"
     done
 done
 

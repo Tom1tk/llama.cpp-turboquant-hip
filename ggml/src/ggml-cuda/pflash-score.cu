@@ -75,10 +75,11 @@ static __global__ void pflash_score_kernel(
     }
     float block_nrm = sdata[0];
 
-    // Parallel reduction: last_K norm
+    // Parallel reduction: last_K norm (re-read from global, sdata was overwritten above)
     sdata[tid] = 0.0f;
     for (int d = tid; d < kv_dim; d += blockDim.x) {
-        sdata[tid] += sdata[(size_t)d] * sdata[d];
+        float val = last_K[d];
+        sdata[tid] += val * val;
     }
     __syncthreads();
     for (int offset = blockDim.x / 2; offset > 0; offset /= 2) {
@@ -107,6 +108,11 @@ int32_t pflash_score_gpu(
     int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
     int threads = kv_dim < 256 ? (int)kv_dim : 256;
 
+    // Round up to power of 2 for parallel reduction correctness
+    int threads_p2 = 1;
+    while (threads_p2 < threads) threads_p2 *= 2;
+    if (threads_p2 > 256) threads_p2 = 256;
+
     float * d_mean_K = nullptr;
     float * d_scores = nullptr;
     hipError_t err;
@@ -123,7 +129,7 @@ int32_t pflash_score_gpu(
     hipLaunchKernelGGL(pflash_mean_k_kernel, grid_dim, block_dim_mean, 0, 0,
         d_k_data, d_mean_K, n_tokens, kv_dim, block_size);
 
-    dim3 block_dim_score(threads);
+    dim3 block_dim_score(threads_p2);
     hipLaunchKernelGGL(pflash_score_kernel, grid_dim, block_dim_score, 0, 0,
         d_mean_K, d_last_K, d_scores, n_blocks, kv_dim);
 

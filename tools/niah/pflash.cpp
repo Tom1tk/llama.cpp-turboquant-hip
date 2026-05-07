@@ -322,7 +322,7 @@ pflash_result pflash_compress(
         res.bypassed = true; res.tokens = tokens; return res;
     }
 
-    // Step 4: Process all tokens in windows
+    // Step 4: Read K data for all tokens
     std::vector<float> all_k((size_t)n_tokens * kv_dim);
 
     // Bulk read K values from first window (single O(n_cells) pass)
@@ -333,10 +333,28 @@ pflash_result pflash_compress(
             LOG_ERR("pflash: bulk K cache read failed (got %d, expected %d)", n_read, probe_n);
             res.bypassed = true; res.tokens = tokens; return res;
         }
+
+        // Sort by position: bulk read returns cell-index order, we need position order
+        bool sorted = true;
+        for (int32_t i = 1; i < probe_n; i++) {
+            if (positions[i] < positions[i - 1]) { sorted = false; break; }
+        }
+        if (!sorted) {
+            // Reorder all_k[0..probe_n-1] by positions[i]
+            std::vector<float> temp((size_t)probe_n * kv_dim);
+            for (int32_t i = 0; i < probe_n; i++) {
+                int32_t pos = positions[i];
+                if (pos >= 0 && pos < probe_n) {
+                    memcpy(&temp[(size_t)pos * kv_dim], &all_k[(size_t)i * kv_dim], (size_t)kv_dim * sizeof(float));
+                }
+            }
+            memcpy(all_k.data(), temp.data(), (size_t)probe_n * kv_dim * sizeof(float));
+        }
     }
 
     // Process remaining windows
-    if (params.window_size > 0 && n_tokens > params.window_size) {
+    const bool use_chunked = params.window_size > 0 && n_tokens > params.window_size;
+    if (use_chunked) {
         for (int32_t offset = win; offset < n_tokens; offset += win) {
             int32_t n_win = std::min(win, n_tokens - offset);
             if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k)) {
@@ -352,26 +370,46 @@ pflash_result pflash_compress(
             LOG_ERR("pflash: bulk K cache read failed (got %d, expected %d)", n_read, n_tokens - probe_n);
             res.bypassed = true; res.tokens = tokens; return res;
         }
+        // Sort by position for remaining rows
+        bool sorted = true;
+        int32_t n_rem = n_tokens - probe_n;
+        for (int32_t i = 1; i < n_rem; i++) {
+            if (positions[i] < positions[i - 1]) { sorted = false; break; }
+        }
+        if (!sorted) {
+            std::vector<float> temp((size_t)n_rem * kv_dim);
+            int32_t base = probe_n;
+            for (int32_t i = 0; i < n_rem; i++) {
+                int32_t pos = positions[i];
+                if (pos >= 0 && pos < n_rem) {
+                    memcpy(&temp[(size_t)pos * kv_dim], &all_k[(size_t)(base + i) * kv_dim], (size_t)kv_dim * sizeof(float));
+                }
+            }
+            memcpy(&all_k[(size_t)base * kv_dim], temp.data(), (size_t)n_rem * kv_dim * sizeof(float));
+        }
     }
     res.draft_us = ggml_time_us() - t0;
 
-    // Step 4: Score blocks (on GPU when available, CPU fallback)
+    // Step 5: Score blocks (GPU when available and non-chunked; CPU fallback otherwise)
+    // GPU scoring reads from cell tensor which is fully populated only for single-pass prefill.
+    // In chunked mode the K tensor holds just the last window; fall back to all_k buffer.
     t0 = ggml_time_us();
     const int32_t n_blocks = (n_tokens + params.block_size - 1) / params.block_size;
     std::vector<float> scores(n_blocks);
     bool scored = false;
 
 #if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
-    // Attempt GPU scoring: keep K on device, avoids GPU→CPU K transfer
-    struct ggml_tensor * k_tensor = llama_kv_cache_get_k_tensor(draft_ctx, score_layer);
-    if (k_tensor && k_tensor->data) {
-        int32_t n_scored = pflash_score_gpu(
-            (const float *)k_tensor->data,
-            n_tokens, kv_dim,
-            params.block_size,
-            scores.data());
-        if (n_scored == n_blocks) {
-            scored = true;
+    if (!use_chunked) {
+        struct ggml_tensor * k_tensor = llama_kv_cache_get_k_tensor(draft_ctx, score_layer);
+        if (k_tensor && k_tensor->data) {
+            int32_t n_scored = pflash_score_gpu(
+                (const float *)k_tensor->data,
+                n_tokens, kv_dim,
+                params.block_size,
+                scores.data());
+            if (n_scored == n_blocks) {
+                scored = true;
+            }
         }
     }
 #endif
@@ -404,7 +442,7 @@ pflash_result pflash_compress(
     }
     res.score_us = ggml_time_us() - t0;
 
-    // Step 5: Select spans
+    // Step 6: Select spans
     t0 = ggml_time_us();
     auto spans = pflash_select(
         scores, params.block_size, n_tokens,
@@ -412,7 +450,7 @@ pflash_result pflash_compress(
         params.keep_ratio, params.min_keep_tokens);
     res.select_us = ggml_time_us() - t0;
 
-    // Step 6: Gather tokens
+    // Step 7: Gather tokens
     t0 = ggml_time_us();
     res.tokens = pflash_gather(tokens, spans);
     res.gather_us = ggml_time_us() - t0;

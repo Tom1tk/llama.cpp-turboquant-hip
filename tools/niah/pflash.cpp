@@ -68,7 +68,9 @@ static bool pflash_process_window(
     int32_t score_layer,
     int32_t kv_dim,
     std::vector<float> & all_k,
-    bool use_bsa)
+    bool use_bsa,
+    int32_t sink_tokens = 2048,
+    int32_t recent_tokens = 4096)
 {
     llama_memory_clear(llama_get_memory(draft_ctx), true);
     llama_synchronize(draft_ctx);
@@ -80,8 +82,8 @@ static bool pflash_process_window(
     // Compute and set BSA block mask before decode
     if (use_bsa) {
         const int BSA_BLOCK = 128;
-        const int n_sink_b = 16;   // 16 * 128 = 2048 sink tokens
-        const int n_local_b = 32;  // 32 * 128 = 4096 recent tokens
+        const int n_sink_b  = std::max(1, sink_tokens   / BSA_BLOCK);
+        const int n_local_b = std::max(1, recent_tokens / BSA_BLOCK);
 
         int n_blocks = (actual + BSA_BLOCK - 1) / BSA_BLOCK;
         std::vector<int32_t> selected_blocks;
@@ -333,12 +335,21 @@ pflash_result pflash_compress(
         if ((int32_t)tokens.size() <= params.bsa_auto_threshold) {
             effective_window = 0;  // BSA single-pass
         }
-        // else: use params.window_size (user-specified, e.g. 4096 for windowed)
     }
 
     // Step 1: Run first window through drafter to populate KV cache for probing
     int64_t t0 = ggml_time_us();
     int32_t n_tokens = (int32_t)tokens.size();
+
+    // Min-scoring-budget guard: skip draft when scoring adds little beyond anchors
+    int32_t keep_budget = std::max(params.min_keep_tokens, (int32_t)std::ceil(keep_ratio * n_tokens));
+    int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
+    int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
+    if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
+        res.bypassed = true;
+        res.tokens = tokens;
+        return res;
+    }
     int32_t win = effective_window > 0 ? std::min(effective_window, n_tokens) : n_tokens;
     int32_t probe_n = std::min(win, n_tokens);
     llama_memory_clear(llama_get_memory(draft_ctx), true);
@@ -348,8 +359,8 @@ pflash_result pflash_compress(
     // Set BSA block mask for initial probe window
     if (params.use_bsa) {
         const int BSA_BLOCK = 128;
-        const int n_sink_b = 16;
-        const int n_local_b = 32;
+        const int n_sink_b  = std::max(1, params.sink_tokens   / BSA_BLOCK);
+        const int n_local_b = std::max(1, params.recent_tokens / BSA_BLOCK);
         int n_blocks = (probe_n + BSA_BLOCK - 1) / BSA_BLOCK;
         std::vector<int32_t> selected;
         selected.reserve(n_sink_b + n_local_b);
@@ -426,7 +437,7 @@ pflash_result pflash_compress(
     if (use_chunked) {
         for (int32_t offset = win; offset < n_tokens; offset += win) {
             int32_t n_win = std::min(win, n_tokens - offset);
-            if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k, params.use_bsa)) {
+            if (!pflash_process_window(draft_ctx, tokens, offset, n_win, score_layer, kv_dim, all_k, params.use_bsa, params.sink_tokens, params.recent_tokens)) {
                 LOG_ERR("pflash: window at %d failed", offset);
                 res.bypassed = true; res.tokens = tokens; return res;
             }

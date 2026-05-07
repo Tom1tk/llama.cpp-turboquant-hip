@@ -2267,6 +2267,9 @@ private:
                             pparams.recent_tokens = params_base.speculative.pflash_recent_tokens;
                             pparams.window_size = params_base.speculative.pflash_window_size;
                             pparams.score_layer = params_base.speculative.pflash_score_layer;
+                            pparams.bsa_auto_threshold = params_base.speculative.pflash_bsa_auto_threshold;
+                            pparams.keep_ratio_auto    = params_base.speculative.pflash_keep_ratio_auto;
+                            pparams.min_scoring_budget = params_base.speculative.pflash_min_scoring_budget;
 
                             auto pfr = pflash_compress(ctx_pflash_draft, raw_tokens, pparams);
                             if (!pfr.bypassed && !pfr.tokens.empty()) {

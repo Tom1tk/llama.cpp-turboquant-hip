@@ -15,7 +15,7 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 - `--pflash-layer` — scoring layer override (default: auto-detect first attention layer)
 - `--pflash-draft-gpu-layers` — GPU layers for draft model (default: -1 = all on GPU)
 - `--pflash-bsa` — use block-sparse attention in drafter prefill
-- `--pflash-bsa-auto N` — auto-select BSA single-pass for n_tokens ≤ N (default: 0 = manual)
+- `--pflash-bsa-auto N` — auto-select BSA single-pass for n_tokens ≤ N (default: 50000; 0 = manual)
 - `--pflash-keep-auto` — adaptive keep ratio by context size (0.80 small / 0.70 mid / 0.65 large)
 - Built-in NIAH (Needle-In-A-Haystack) benchmark harness (`llama-niah`)
 - `PFLASH:` parseable log line with source/kept/draft/score/select/timing breakdown
@@ -138,10 +138,12 @@ keep ratio (`--pflash-keep-auto`) implemented for production use.
 | 64k     | 43,310 | 6.48s     | 39.6s    | 3.64s     | 39.7s    | BSA -0.1s |
 | 128k    | 86,416 | 19.9s     | 96.1s    | 7.12s     | 96.5s    | BSA -0.4s |
 
-Note: BSA single-pass wins on TTFT at all measured contexts (16k-128k) but the
-margin narrows above 32k. Windowed mode wins on draft time above 50k (2.8x faster
-at 128k). Auto-mode (`--pflash-bsa-auto 40000 --pflash-bsa`) selects BSA below
-40k actual tokens and windowed above, based on crossover data from 16k-128k sweep.
+Note: BSA single-pass wins on TTFT at all measured contexts (16k-128k). Single-run
+differences are ≤0.5s (within noise for 128k). Windowed mode wins on draft time above
+50k (2.8x faster at 128k). Auto-mode (`--pflash-bsa-auto 50000 --pflash-bsa`) defaults
+to selecting BSA below 50k actual tokens and windowed above (conservative crossover based
+on single equivocal data point at 50k/34k actual). The default `bsa_auto_threshold=50000`
+means auto-mode is enabled by default — set to 0 for manual control.
 Adaptive keep ratio (`--pflash-keep-auto`) uses 0.80 below 25k, 0.70 to 64k,
 0.65 above 64k — preventing anchor-dominated budgets at small contexts.
 

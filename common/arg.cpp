@@ -3652,6 +3652,27 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_RECENT"));
     add_opt(common_arg(
+        {"--pflash-bsa-auto"}, "N",
+        "auto-select BSA single-pass for n_tokens <= N, windowed above (default: 50000; 0=off)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_bsa_auto_threshold = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_BSA_AUTO"));
+    add_opt(common_arg(
+        {"--pflash-keep-auto"},
+        "adaptive keep ratio by context size (0.80 <25k, 0.70 <64k, 0.65 >=64k)",
+        [](common_params & params) {
+            params.speculative.pflash_keep_ratio_auto = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_KEEP_AUTO"));
+    add_opt(common_arg(
+        {"--pflash-min-score-budget"}, "N",
+        "skip PFlash draft pass when scoring budget < N tokens (default: 0 = off)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_min_scoring_budget = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_MIN_SCORE_BUDGET"));
+    add_opt(common_arg(
         {"--pflash-block-size"}, "N",
         "PFlash scoring block granularity in tokens (default: 128)",
         [](common_params & params, int value) {

@@ -46,7 +46,7 @@ struct pflash_params {
 
     // Auto-mode: BSA single-pass if n_tokens <= threshold, windowed otherwise
     // 0 = manual (user controls window_size directly)
-    int32_t bsa_auto_threshold = 0;
+    int32_t bsa_auto_threshold = 50000;
 
     // Adaptive keep ratio: auto-adjust based on context size
     // When true, keep_ratio is derived from context size bands:
@@ -54,6 +54,10 @@ struct pflash_params {
     //   n < 64k → 0.70   (moderate scoring utility)
     //   n ≥ 64k → 0.65   (full scoring benefit)
     bool keep_ratio_auto = false;
+
+    // Minimum scoring budget: skip draft pass when scoring_budget < this value
+    // Prevents wasting a GPU draft pass when most kept tokens are anchors
+    int32_t min_scoring_budget = 2048;
 };
 
 struct pflash_span {

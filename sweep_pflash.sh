@@ -98,11 +98,68 @@ run_bsa_test() {
     json=$(run_niah "$ctx" "$fix" 1 \
         --pflash-keep-ratio "$kr" \
         --pflash-block-size 128 \
-        --pflash-sink 1024 --pflash-recent 1024 \
+        --pflash-sink 2048 --pflash-recent 4096 \
         --pflash-threshold 0 --pflash-window 0 \
         --pflash-bsa --pflash-layer -1)
     local json_line=$(echo "$json" | grep '^{"answer"')
     parse_and_log "$ctx" "$kr" "$json_line" 0
+}
+
+# --- Multi-trial aggregation ---
+
+parse_multi() {
+    local ctx=$1 kr=$2 mode=$3 json_lines=$4
+    if [ -z "$json_lines" ]; then
+        echo "0,0,0,0,0,0,0"
+        echo "  [${mode}] ctx=$ctx kr=$kr — NO OUTPUT"
+        return
+    fi
+    python3 << PYEOF
+import json, sys
+lines = """$json_lines""".strip().split('\n')
+results = []
+for l in lines:
+    try: results.append(json.loads(l))
+    except: pass
+if not results:
+    print("0,0,0,0,0,0,0")
+    raise SystemExit(0)
+n = len(results)
+n_pass = sum(1 for r in results if r.get('pass'))
+mean_draft = sum(r.get('pflash_draft_ms', 0) for r in results) / n
+mean_ttft  = sum(r.get('ttft_ms', 0) for r in results) / n
+kept_pct   = sum(r.get('pflash_kept_tokens',0)/max(r.get('prompt_tokens',1),1)*100 for r in results) / n
+pass_rate  = n_pass / n * 100
+print(f"{pass_rate:.0f},{mean_draft:.0f},{mean_ttft:.0f},{kept_pct:.1f},{n},{n_pass}")
+msg = f"  [{mode}] ctx={ctx} kr={kr} n={n} pass={n_pass}/{n} ({pass_rate:.0f}%) draft={mean_draft:.0f}ms ttft={mean_ttft:.0f}ms"
+import sys; print(msg, file=sys.stderr)
+PYEOF
+}
+
+run_pflash_multi() {
+    local ctx=$1 kr=$2 fix=$3
+    [ -f "$fix" ] || { echo "  missing fixture $fix"; return; }
+    local json_lines
+    json_lines=$(run_niah "$ctx" "$fix" 1 \
+        --pflash-keep-ratio "$kr" \
+        --pflash-block-size 128 \
+        --pflash-sink 2048 --pflash-recent 4096 \
+        --pflash-threshold 0 --pflash-window 4096 \
+        --pflash-layer -1 | grep '^{')
+    parse_multi "$ctx" "$kr" "WIN" "$json_lines"
+}
+
+run_bsa_multi() {
+    local ctx=$1 kr=$2 fix=$3 sink=${4:-2048} recent=${5:-4096}
+    [ -f "$fix" ] || { echo "  missing fixture $fix"; return; }
+    local json_lines
+    json_lines=$(run_niah "$ctx" "$fix" 1 \
+        --pflash-keep-ratio "$kr" \
+        --pflash-block-size 128 \
+        --pflash-sink "$sink" --pflash-recent "$recent" \
+        --pflash-threshold 0 --pflash-window 0 \
+        --pflash-bsa --pflash-layer -1 | grep '^{')
+    parse_multi "$ctx" "$kr" "BSA" "$json_lines"
 }
 
 run_baseline_test() {

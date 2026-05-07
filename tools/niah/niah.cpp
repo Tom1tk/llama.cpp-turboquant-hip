@@ -51,6 +51,7 @@ struct niah_params {
     bool pflash_bsa = false;
     int32_t pflash_bsa_auto_threshold = 0;
     bool pflash_keep_ratio_auto = false;
+    int32_t pflash_min_scoring_budget = 0;
 };
 
 struct niah_fixture {
@@ -116,6 +117,7 @@ static void print_usage() {
     fprintf(stdout, "  --pflash-bsa            use block-sparse attention in drafter\n");
     fprintf(stdout, "  --pflash-bsa-auto N     auto-select BSA single-pass for n_tokens <= N (default: 0=off)\n");
     fprintf(stdout, "  --pflash-keep-auto      adaptive keep ratio by context size\n");
+    fprintf(stdout, "  --pflash-min-score-budget N  skip draft when scoring_budget < N (default: 0=off)\n");
     fprintf(stdout, "  --draft-cache-k <type>  drafter K cache type (default: f16)\n");
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
@@ -256,6 +258,7 @@ static niah_result run_fixture(
         pparams.use_bsa = params.pflash_bsa;
         pparams.bsa_auto_threshold = params.pflash_bsa_auto_threshold;
         pparams.keep_ratio_auto = params.pflash_keep_ratio_auto;
+        pparams.min_scoring_budget = params.pflash_min_scoring_budget;
 
         auto presult = pflash_compress(draft_ctx, tokens, pparams);
         res.pflash_bypassed = presult.bypassed;
@@ -500,6 +503,8 @@ int main(int argc, char **argv) {
             params.pflash_bsa_auto_threshold = std::stoi(args[++i]);
         } else if (arg == "--pflash-keep-auto") {
             params.pflash_keep_ratio_auto = true;
+        } else if (arg == "--pflash-min-score-budget" && i + 1 < args.size()) {
+            params.pflash_min_scoring_budget = std::stoi(args[++i]);
         } else if (arg == "--draft-cache-k" && i + 1 < args.size()) {
             params.draft_cache_type_k = args[++i];
         } else if (arg == "--draft-cache-v" && i + 1 < args.size()) {

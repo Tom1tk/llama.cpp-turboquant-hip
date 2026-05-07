@@ -363,6 +363,9 @@ struct common_params_speculative {
     int32_t pflash_window_size = 4096;   // chunk window size for drafter forward
     int32_t pflash_score_layer = -1;     // scoring layer index (-1 = auto)
     int32_t pflash_draft_gpu_layers = -1; // GPU layers for draft model (-1 = all)
+    int32_t pflash_bsa_auto_threshold = 50000; // auto-select BSA single-pass below N tokens (0=off)
+    bool    pflash_keep_ratio_auto    = false; // adaptive keep ratio by context size
+    int32_t pflash_min_scoring_budget = 0;     // skip draft when scoring_budget < N (0=off)
 
     bool has_dft() const {
         return !mparams_dft.path.empty() || !mparams_dft.hf_repo.empty();

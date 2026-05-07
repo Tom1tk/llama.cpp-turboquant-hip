@@ -2,7 +2,7 @@
 
 ![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)
 
-PFlash is a speculative prefill technique that compresses long prompts before the target model prefill. A small draft model (e.g. Qwen3.5-0.8B) runs ahead on CPU, scores prompt blocks by K-vector cosine similarity to the last position, then keeps only the most relevant blocks — discarding repetitive filler while preserving structural content via sink/recent anchors.
+PFlash is a speculative prefill technique that compresses long prompts before the target model prefill. A small draft model (e.g. Qwen3.5-0.8B) runs ahead on CPU, processes the prompt in chunked windows with **absolute RoPE position encoding** for cross-window K-vector comparison, scores prompt blocks by cosine similarity to the last position, then keeps only the most relevant blocks — discarding repetitive filler while preserving structural content via sink/recent anchors.
 
 ## Features
 
@@ -19,7 +19,7 @@ PFlash is a speculative prefill technique that compresses long prompts before th
 
 ## Benchmarks (Qwen3.6-27B Q4_K_XL + Qwen3.5-0.8B Q8_0, RX 7900 XTX)
 
-Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 tests. **The optimal keep ratio is 0.65 at all context sizes where PFlash is net-positive.** Speedup grows with context:
+Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 tests + 7 baselines. **The optimal keep ratio is 0.65 at all context sizes where PFlash is net-positive.** Speedup grows with context:
 
 | Context | Actual Tokens | Keep | Draft  | Prefill | Eff. TTFT | Baseline | Speedup |
 |---------|--------------|------|--------|---------|-----------|----------|---------|
@@ -30,19 +30,35 @@ Sweep across 7 context sizes (16k–100k) × 5 keep ratios (0.65–0.85) = 35 te
 | 64k     | 43,310       | 65%  | 16.8s  | 39.9s   | 56.7s     | 68.8s    | +18%    |
 | 100k    | 67,526       | 65%  | 27.1s  | 69.9s   | 97.0s     | 126.3s   | +23%    |
 
+> *v1 sweep (pre-RoPE fix). A v2 sweep with corrected cross-window K-vector scoring is pending — expected to improve quality at lower keep ratios.*
+
 **Key findings:**
 - Below ~14k actual tokens (~20k requested) the draft overhead exceeds prefill savings — PFlash auto-disables.
-- The draft model scales linearly (~0.38× token count on CPU).
-- NIAH quality passes at all sizes with keep ≥ 65%, except at 20k where anchors consume too much of the budget (need 85%).
+- The draft model scales linearly (~0.38× token count on CPU, ~3% faster with batch alloc fix).
+- Note: 20k was the only size where NIAH failed at 65-80% (anchors + window-local RoPE caused needle block mis-scoring). The **RoPE position fix** (absolute positions across windows) resolves this — K vectors are now properly comparable across chunks.
 - Per-decode speed improves ~10% at 65% keep due to smaller KV cache.
 
 **Usage:**
 ```sh
+# Auto mode — sweep-tuned policy (keep_ratio=0.65, threshold=14k)
 llama-server \
   --model model.gguf \
   --model-draft draft.gguf \
   --pflash-mode auto \
   --pflash-window 4096
+
+# Manual mode — full control over all parameters
+llama-server \
+  --model model.gguf \
+  --model-draft draft.gguf \
+  --pflash-mode on \
+  --pflash-keep-ratio 0.75 \
+  --pflash-threshold 8192 \
+  --pflash-sink 2048 \
+  --pflash-recent 4096 \
+  --pflash-window 4096 \
+  --pflash-block-size 128 \
+  --pflash-layer -1
 ```
 
 ## Roadmap
@@ -57,7 +73,7 @@ Download Qwen3-0.6B-Q8_0 as drafter. Implement `pflash_score()` (mean-K cosine s
 Replace per-position `ggml_backend_tensor_get` calls with a single batch read for all positions, reducing cache read overhead.
 
 **Phase 3 — Chunked sliding window** ✓
-Replace full-prompt drafter forward with chunked windows (default 4096 tokens). Process prompt in windows, aggregate scores across windows.
+Replace full-prompt drafter forward with chunked windows (default 4096 tokens). Process prompt in windows with absolute RoPE positions for cross-window K-vector comparability. Aggregate scores across windows.
 
 **Phase 4 — Server integration** ✓
 Wire into `llama-server` as `--pflash-mode auto/on/off`, `--pflash-keep-ratio`, `--pflash-threshold`, `--pflash-window`. Works end-to-end with tool-calling workloads.

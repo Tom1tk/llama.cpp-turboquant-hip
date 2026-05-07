@@ -32,9 +32,10 @@ QUICK="${1:-}"
 BASELINE_ONLY="${2:-}"
 
 run_niah() {
-    local ctx=$1 fix=$2 draft_cfg=""
-    shift 2
-    if [ -n "$DRAFT" ]; then
+    local ctx=$1 fix=$2 use_draft=$3
+    shift 3
+    local draft_cfg=""
+    if [ "$use_draft" = "1" ] && [ -n "$DRAFT" ]; then
         draft_cfg="--draft $DRAFT --draft-cache-k f32"
     fi
     timeout 300 ./build/bin/llama-niah \
@@ -50,45 +51,51 @@ run_niah() {
 }
 
 parse_and_log() {
-    local ctx=$1 kr=$2 json_line=$3
+    local ctx=$1 kr=$2 json_line=$3 is_bl=$4
     if [ -z "$json_line" ]; then
         echo "$ctx,$kr,0,0,0,0,0,0,0,0" >> "$RESULTS"
         echo "  ❌ NO OUTPUT"
         return
     fi
     local total=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['prompt_tokens'])")
-    local kept=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['pflash_kept_tokens'])")
-    local draft=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['pflash_draft_ms'])")
     local pref=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['prefill_ms'])")
     local prefus=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['prefill_us'])")
     local ttft=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['ttft_ms'])")
     local pass=$(echo "$json_line" | python3 -c "import json,sys; print(1 if json.load(sys.stdin)['pass'] else 0)")
-    local recv=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['recovered'])")
     local tps=$(python3 -c "print(f'{1e6*$total/$prefus:.0f}')")
     local pas="PASS"; [ "$pass" = "0" ] && pas="FAIL"
-    printf "  %-5s %-4s tot=%-6d kept=%-6d (%-3.0f%%) draft=%-6.0fms pref=%-6.0fms t/s=%-5s ttft=%-6.0fms %s\n" \
-        "ctx=$ctx" "kr=$kr" "$total" "$kept" "$(python3 -c "print(f'{100*$kept/$total:.0f}')")" "$draft" "$pref" "$tps" "$ttft" "$pas"
-    echo "$ctx,$kr,$total,$kept,$draft,$pref,$tps,$ttft,$pass,$recv" >> "$RESULTS"
+    if [ "$is_bl" = "1" ]; then
+        printf "  %-6s           tot=%-6d                    pref=%-6.0fms t/s=%-5s ttft=%-6.0fms %s\n" \
+            "ctx=$ctx" "$total" "$pref" "$tps" "$ttft" "$pas"
+        echo "$ctx,$kr,$total,$total,0,$pref,$tps,$ttft,$pass,0" >> "$RESULTS"
+    else
+        local kept=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['pflash_kept_tokens'])")
+        local draft=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['pflash_draft_ms'])")
+        local recv=$(echo "$json_line" | python3 -c "import json,sys; print(json.load(sys.stdin)['recovered'])")
+        printf "  %-5s %-4s tot=%-6d kept=%-6d (%-3.0f%%) draft=%-6.0fms pref=%-6.0fms t/s=%-5s ttft=%-6.0fms %s\n" \
+            "ctx=$ctx" "kr=$kr" "$total" "$kept" "$(python3 -c "print(f'{100*$kept/$total:.0f}')")" "$draft" "$pref" "$tps" "$ttft" "$pas"
+        echo "$ctx,$kr,$total,$kept,$draft,$pref,$tps,$ttft,$pass,$recv" >> "$RESULTS"
+    fi
 }
 
 run_pflash_test() {
     local ctx=$1 kr=$2 fix=$3
     local json
-    json=$(run_niah "$ctx" "$fix" \
+    json=$(run_niah "$ctx" "$fix" 1 \
         --pflash-keep-ratio "$kr" \
         --pflash-block-size 128 \
         --pflash-sink 2048 --pflash-recent 4096 \
         --pflash-threshold 0 --pflash-window 4096 \
         --pflash-layer -1)
     local json_line=$(echo "$json" | grep '^{"answer"')
-    parse_and_log "$ctx" "$kr" "$json_line"
+    parse_and_log "$ctx" "$kr" "$json_line" 0
 }
 
 run_baseline_test() {
     local ctx=$1 fix=$2
-    local json=$(run_niah "$ctx" "$fix")
+    local json=$(run_niah "$ctx" "$fix" 0)
     local json_line=$(echo "$json" | grep '^{"answer"')
-    parse_and_log "$ctx" "1.0" "$json_line"
+    parse_and_log "$ctx" "1.0" "$json_line" 1
 }
 
 # ============= BASELINES =============

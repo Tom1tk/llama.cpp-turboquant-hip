@@ -126,12 +126,12 @@
   type: C
   difficulty: hard
   question: >
-    Trace the complete execution path from when --pflash-bsa is parsed in
-    tools/niah/niah.cpp to when hipLaunchKernelGGL is called in
-    ggml/src/ggml-cuda/pflash-bsa.cu. List every function name in execution
-    order, one per line.
+    At inference time — during a call to llama_decode() on the drafter context
+    with use_pflash_bsa=true — trace the execution path from build_attn_mha()
+    in src/llama-graph.cpp to the hipLaunchKernelGGL call in
+    ggml/src/ggml-cuda/pflash-bsa.cu. List each function name in execution
+    order, starting from build_attn_mha.
   expected_substrings:
-    - "pflash_init_draft"
     - "build_attn_mha"
     - "ggml_pflash_bsa_attn"
     - "ggml_cuda_pflash_bsa_attn"
@@ -139,10 +139,8 @@
     - "hipLaunchKernelGGL"
   min_recovered: 4
   answer_files:
-    - "tools/niah/niah.cpp"
-    - "tools/niah/pflash.cpp"
-    - "src/llama-context.cpp"
     - "src/llama-graph.cpp"
+    - "ggml/src/ggml.c"
     - "ggml/src/ggml-cuda/ggml-cuda.cu"
     - "ggml/src/ggml-cuda/pflash-bsa.cu"
 
@@ -187,39 +185,53 @@
 
 # --- TYPE D: IMPACT ANALYSIS ---
 
-- id: D1
+- id: D1a
   type: D
-  difficulty: hard
+  difficulty: medium
   question: >
-    If BSA_BLOCK_SIZE is changed from 128 to 256, identify every location in
-    the codebase that would produce incorrect results or need updating.
-    Be specific about file names and the nature of each required change.
-  expected_substrings:
-    - "pflash-bsa.cu"
-    - "pflash.cpp"
-    - "BSA_BLOCK_SIZE"
-  min_recovered: 3
-  answer_files:
-    - "ggml/src/ggml-cuda/pflash-bsa.cu"
-    - "tools/niah/pflash.cpp"
+    In ggml/src/ggml-cuda/pflash-bsa.cu, BSA_BLOCK_SIZE is used as a loop
+    bound and array index. If it changed from 128 to 256, what specific
+    variables or array declarations in that file would need updating?
+    Name them.
+  expected_substrings: ["BSA_BLOCK_SIZE", "sdata", "k_start", "k_end"]
+  min_recovered: 2
+  answer_files: ["ggml/src/ggml-cuda/pflash-bsa.cu"]
 
-- id: D2
+- id: D1b
   type: D
-  difficulty: hard
+  difficulty: medium
   question: >
-    If a third parameter (say, n_heads_kv as an int32) is added to
-    ggml_pflash_bsa_attn's op_params, which files must change and what
-    specific change is required in each?
-  expected_substrings:
-    - "ggml.c"
-    - "ggml-cuda.cu"
-    - "pflash-bsa.cu"
-    - "op_params"
+    In tools/niah/pflash.cpp, BSA_BLOCK_SIZE (128) is used when constructing
+    the BSA block mask in both pflash_compress and pflash_process_window.
+    If it changed to 256, what would need updating in that file?
+    Identify the relevant variable declarations or calculations.
+  expected_substrings: ["BSA_BLOCK", "n_sink_b", "n_local_b", "n_blocks"]
+  min_recovered: 2
+  answer_files: ["tools/niah/pflash.cpp"]
+
+- id: D2a
+  type: D
+  difficulty: medium
+  question: >
+    If a third integer parameter (n_heads_kv) is added to ggml_pflash_bsa_attn
+    in ggml/src/ggml.c, which two other files must also change to handle
+    this new parameter? Name the files and the specific function in each
+    that would need updating.
+  expected_substrings: ["ggml-cuda.cu", "pflash-bsa.cu", "ggml_cuda_pflash_bsa_attn", "pflash_bsa_forward"]
   min_recovered: 3
-  answer_files:
-    - "ggml/src/ggml.c"
-    - "ggml/src/ggml-cuda/ggml-cuda.cu"
-    - "ggml/src/ggml-cuda/pflash-bsa.cu"
+  answer_files: ["ggml/src/ggml.c", "ggml/src/ggml-cuda/ggml-cuda.cu", "ggml/src/ggml-cuda/pflash-bsa.cu"]
+
+- id: D2b
+  type: D
+  difficulty: medium
+  question: >
+    ggml_cuda_pflash_bsa_attn in ggml/src/ggml-cuda/pflash-bsa.cu reads
+    op_params to extract scale and n_selected. If a third parameter
+    n_heads_kv is added to op_params, what specific line of code would
+    need to be added to that function to extract it?
+  expected_substrings: ["ggml_get_op_params_f32", "op_params", "n_heads_kv"]
+  min_recovered: 2
+  answer_files: ["ggml/src/ggml-cuda/pflash-bsa.cu"]
 
 # --- TYPE E: ANOMALY DETECTION ---
 

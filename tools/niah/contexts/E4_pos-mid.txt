@@ -1,0 +1,438 @@
+// ===== FILE: ggml/src/ggml-cuda/fattn-tile.cu ===== #include "common.cuh" #include "fattn-tile.cuh" #include "fattn-wmma-f16.cuh" void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) { const ggml_tensor * K = dst->src[1]; const ggml_tensor * V = dst->src[2]; switch (K->ne[0]) { case 40: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case< 40, 40>(ctx, dst); } break; case 64: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case< 64, 64>(ctx, dst); } break; case 72: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case< 72, 72>(ctx, dst); } break; case 80: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case< 80, 80>(ctx, dst); } break; case 96: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case< 96, 96>(ctx, dst); } break; case 112: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case<112, 112>(ctx, dst); } break; case 128: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case<128, 128>(ctx, dst); } break; case 256: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case<256, 256>(ctx, dst); } break; case 512: { GGML_ASSERT(V->ne[0] == K->ne[0]); ggml_cuda_flash_attn_ext_tile_case<512, 512>(ctx, dst); } break; #ifndef GGML_USE_HIP // D>=576 tile kernels exceed HIP local memory limit (67584 > 65536) case 576: { GGML_ASSERT(V->ne[0] == 512); ggml_cuda_flash_attn_ext_tile_case<576, 512>(ctx, dst); } break; case 640: { GGML_ASSERT(V->ne[0] == 512); ggml_cuda_flash_attn_ext_tile_case<640, 512>(ctx, dst); } break; #endif default: { GGML_ABORT("Unsupported head size"); } break; } } // ===== FILE: src/llama-model.cpp ===== layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i), {n_embd}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0); layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up_b = create_tensor(tn(LLM_TENSOR_FFN_UP, "bias", i), {n_ff}, 0); } } break; case LLM_ARCH_CODESHELL: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if tok embd is NULL, init from output if (tok_embd == NULL) { tok_embd = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); } // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, 0); for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i), {n_embd}, 0); layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0); layer.bqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "bias", i), {n_embd + 2*n_embd_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0); layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i), {n_embd}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0); layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up_b = create_tensor(tn(LLM_TENSOR_FFN_UP, "bias", i), {n_ff}, 0); } } break; case LLM_ARCH_ORION: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, 0); for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); } } break; case LLM_ARCH_INTERNLM2: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, 0); for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); // layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); } } break; case LLM_ARCH_GEMMA: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head_k * n_head}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_k_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_v_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); } } break; case LLM_ARCH_GEMMA2: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head_k * n_head}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_k_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_v_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0); layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0); } } break; case LLM_ARCH_GEMMA3: case LLM_ARCH_GEMMA_EMBEDDING: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if output is NULL, init from the input tok embed if (output == NULL) { output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); } // Dense linear weights dense_2_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_2_OUT, "weight"), {n_embd, hparams.dense_2_feat_out}, TENSOR_NOT_REQUIRED); dense_3_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_3_OUT, "weight"), {hparams.dense_3_feat_in, n_embd}, TENSOR_NOT_REQUIRED); for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head_k * n_head}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_k_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_v_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0); layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0); layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0); layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0); } } break; case LLM_ARCH_GEMMA3N: { const int64_t n_altup = hparams.n_altup; const int64_t laurel_rank = hparams.laurel_rank; const int64_t n_embd_altup = hparams.n_embd_altup; output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if output is NULL, init from the input tok embed if (output == NULL) { output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); } tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); tok_embd_per_layer = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_altup * n_layer, n_vocab}, 0); altup_proj = create_tensor(tn(LLM_TENSOR_ALTUP_PROJ, "weight"), {n_embd, n_embd, n_altup - 1}, 0); altup_unembd_proj = create_tensor(tn(LLM_TENSOR_ALTUP_UNEMBD_PROJ, "weight"), {n_embd, n_embd, n_altup - 1}, 0); per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_altup * n_layer}, 0); per_layer_proj_norm = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM, "weight"), {n_embd_altup}, 0); output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head_k * n_head}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_k_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_v_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0); layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0); layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0); layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i),
+
+
+// ===== FILE: include/pflash.h =====
+
+#pragma once
+
+#include "llama.h"
+
+#include <vector>
+#include <string>
+#include <utility>
+
+struct pflash_params {
+    // Path to the draft model (small GGUF)
+    std::string draft_model_path;
+
+    // Fraction of tokens to keep
+    float keep_ratio = 0.75f;
+
+    // Minimum number of tokens to always keep
+    int32_t min_keep_tokens = 2048;
+
+    // Number of prefix tokens to always keep (sink tokens)
+    int32_t sink_tokens = 2048;
+
+    // Number of suffix tokens to always keep (recent tokens)
+    int32_t recent_tokens = 4096;
+
+    // Scoring block size
+    int32_t block_size = 128;
+
+    // Scoring layer index (negative = auto-select)
+    int32_t score_layer = -1;
+
+    // Minimum source tokens to apply PFlash
+    int32_t threshold_tokens = 8192;
+
+    // KV cache types for the drafter
+    std::string draft_cache_type_k = "f16";
+    std::string draft_cache_type_v = "f16";
+
+    // Chunked window size for Phases 2-3 (0 = disabled, process full prompt)
+    int32_t window_size = 4096;
+
+    // GPU layers for draft model (-1 = all, 0 = CPU only, N = first N layers)
+    int32_t draft_gpu_layers = -1;
+
+    // Use Block-Sparse Attention for drafter (Phase 5C+)
+    bool use_bsa = false;
+
+    // Auto-mode: BSA single-pass if n_tokens <= threshold, windowed otherwise
+    // 0 = manual (user controls window_size directly)
+    int32_t bsa_auto_threshold = 50000;
+
+    // Adaptive keep ratio: auto-adjust based on context size
+    // When true, keep_ratio is derived from context size bands:
+    //   n < 25k → 0.80   (anchors dominate; scoring barely activates)
+    //   n < 64k → 0.70   (moderate scoring utility)
+    //   n ≥ 64k → 0.65   (full scoring benefit)
+    bool keep_ratio_auto = false;
+
+    // Minimum scoring budget: skip draft pass when scoring_budget < this value
+    // Prevents wasting a GPU draft pass when most kept tokens are anchors
+    int32_t min_scoring_budget = 2048;
+};
+
+struct pflash_span {
+    int32_t start;
+    int32_t end; // exclusive
+};
+
+struct pflash_result {
+    std::vector<llama_token> tokens;
+    std::vector<pflash_span> spans;
+    int32_t source_count = 0;
+    int32_t kept_count = 0;
+    int64_t score_us = 0;
+    int64_t select_us = 0;
+    int64_t gather_us = 0;
+    int64_t draft_us = 0;
+    bool bypassed = false;
+};
+
+// Initialize a draft model context from a GGUF file
+// n_gpu_layers: number of layers to offload to GPU (-1 = all, 0 = CPU only)
+// Returns a new llama_context configured for the drafter
+struct llama_context * pflash_init_draft(
+    const std::string & model_path,
+    int32_t n_ctx,
+    const std::string & cache_type_k,
+    const std::string & cache_type_v,
+    int32_t n_gpu_layers = -1,
+    bool use_bsa = false);
+
+// Select which spans to keep based on scores and configuration
+std::vector<pflash_span> pflash_select(
+    const std::vector<float> & scores,
+    int32_t block_size,
+    int32_t n_tokens,
+    int32_t sink_tokens,
+    int32_t recent_tokens,
+    float keep_ratio,
+    int32_t min_keep_tokens);
+
+// Gather the selected tokens from the source tokens
+std::vector<llama_token> pflash_gather(
+    const std::vector<llama_token> & source,
+    const std::vector<pflash_span> & spans);
+
+// Full PFlash compression pipeline
+// Returns compressed token sequence (or original if bypassed)
+pflash_result pflash_compress(
+    struct llama_context * draft_ctx,
+    const std::vector<llama_token> & tokens,
+    const pflash_params & params);
+
+
+// ===== FILE: README.md =====
+
+# PFlash — Speculative Prefill for llama.cpp
+
+PFlash compresses long prompts using a small draft model before the target model prefill. See [PFLASH_PHASES.md](PFLASH_PHASES.md) for full development history, test results, and remaining work.
+
+**Quick start:**
+```sh
+# Auto mode — sweep-tuned policy
+llama-server --model model.gguf --model-draft draft.gguf --pflash-mode auto --pflash-window 4096
+
+# NIAH benchmark with BSA
+llama-niah --model model.gguf --draft draft.gguf --pflash-keep-ratio 0.65 --pflash-bsa-auto 50000 --pflash-bsa
+```
+
+**Key findings:**
+- GPU drafter: 4–5× faster than CPU; 43% TTFT speedup at 128k
+- Quality floor for semantic code tasks: kr=0.55 windowed (100% pass)
+- BSA single-pass ≤50k tokens; windowed mode above for best speed/quality
+
+---
+
+# llama.cpp
+
+![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp)](https://github.com/ggml-org/llama.cpp/releases)
+[![Server](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
+
+[Manifesto](https://github.com/ggml-org/llama.cpp/discussions/205) / [ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md)
+
+LLM inference in C/C++
+
+## Recent API changes
+
+- [Changelog for `libllama` API](https://github.com/ggml-org/llama.cpp/issues/9289)
+- [Changelog for `llama-server` REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
+
+## Hot topics
+
+- **Hugging Face cache migration: models downloaded with `-hf` are now stored in the standard Hugging Face cache directory, enabling sharing with other HF tools.**
+- **[guide : using the new WebUI of llama.cpp](https://github.com/ggml-org/llama.cpp/discussions/16938)**
+- [guide : running gpt-oss with llama.cpp](https://github.com/ggml-org/llama.cpp/discussions/15396)
+- [[FEEDBACK] Better packaging for llama.cpp to support downstream consumers 🤗](https://github.com/ggml-org/llama.cpp/discussions/15313)
+- Support for the `gpt-oss` model with native MXFP4 format has been added | [PR](https://github.com/ggml-org/llama.cpp/pull/15091) | [Collaboration with NVIDIA](https://blogs.nvidia.com/blog/rtx-ai-garage-openai-oss) | [Comment](https://github.com/ggml-org/llama.cpp/discussions/15095)
+- Multimodal support arrived in `llama-server`: [#12898](https://github.com/ggml-org/llama.cpp/pull/12898) | [documentation](./docs/multimodal.md)
+- VS Code extension for FIM completions: https://github.com/ggml-org/llama.vscode
+- Vim/Neovim plugin for FIM completions: https://github.com/ggml-org/llama.vim
+- Hugging Face Inference Endpoints now support GGUF out of the box! https://github.com/ggml-org/llama.cpp/discussions/9669
+- Hugging Face GGUF editor: [discussion](https://github.com/ggml-org/llama.cpp/discussions/9268) | [tool](https://huggingface.co/spaces/CISCai/gguf-editor)
+
+----
+
+## Quick start
+
+Getting started with llama.cpp is straightforward. Here are several ways to install it on your machine:
+
+- Install `llama.cpp` using [brew, nix or winget](docs/install.md)
+- Run with Docker - see our [Docker documentation](docs/docker.md)
+- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
+- Build from source by cloning this repository - check out [our build guide](docs/build.md)
+
+Once installed, you'll need a model to work with. Head to the [Obtaining and quantizing models](#obtaining-and-quantizing-models) section to learn more.
+
+Example command:
+
+```sh
+# Use a local model file
+llama-cli -m my_model.gguf
+
+# Or download and run a model directly from Hugging Face
+llama-cli -hf ggml-org/gemma-3-1b-it-GGUF
+
+# Launch OpenAI-compatible API server
+llama-server -hf ggml-org/gemma-3-1b-it-GGUF
+```
+
+## Description
+
+The main goal of `llama.cpp` is to enable LLM inference with minimal setup and state-of-the-art performance on a wide
+range of hardware - locally and in the cloud.
+
+- Plain C/C++ implementation without any dependencies
+- Apple silicon is a first-class citizen - optimized via ARM NEON, Accelerate and Metal frameworks
+- AVX, AVX2, AVX512 and AMX support for x86 architectures
+- RVV, ZVFH, ZFH, ZICBOP and ZIHINTPAUSE support for RISC-V architectures
+- 1.5-bit, 2-bit, 3-bit, 4-bit, 5-bit, 6-bit, and 8-bit integer quantization for faster inference and reduced memory use
+- Custom CUDA kernels for running LLMs on NVIDIA GPUs (support for AMD GPUs via HIP and Moore Threads GPUs via MUSA)
+- Vulkan and SYCL backend support
+- CPU+GPU hybrid inference to partially accelerate models larger than the total VRAM capacity
+
+The `llama.cpp` project is the main playground for developing new features for the [ggml](https://github.com/ggml-org/ggml) library.
+
+<details>
+<summary>Models</summary>
+
+Typically finetunes of the base models below are supported as well.
+
+Instructions for adding support for new models: [HOWTO-add-model.md](docs/development/HOWTO-add-model.md)
+
+#### Text-only
+
+- [X] LLaMA 🦙
+- [x] LLaMA 2 🦙🦙
+- [x] LLaMA 3 🦙🦙🦙
+- [X] [Mistral 7B](https://huggingface.co/mistralai/Mistral-7B-v0.1)
+- [x] [Mixtral MoE](https://huggingface.co/models?search=mistral-ai/Mixtral)
+- [x] [DBRX](https://huggingface.co/databricks/dbrx-instruct)
+- [x] [Jamba](https://huggingface.co/ai21labs)
+- [X] [Falcon](https://huggingface.co/models?search=tiiuae/falcon)
+- [X] [Chinese LLaMA / Alpaca](https://github.com/ymcui/Chinese-LLaMA-Alpaca) and [Chinese LLaMA-2 / Alpaca-2](https://github.com/ymcui/Chinese-LLaMA-Alpaca-2)
+- [X] [Vigogne (French)](https://github.com/bofenghuang/vigogne)
+- [X] [BERT](https://github.com/ggml-org/llama.cpp/pull/5423)
+- [X] [Koala](https://bair.berkeley.edu/blog/2023/04/03/koala/)
+- [X] [Baichuan 1 & 2](https://huggingface.co/models?search=baichuan-inc/Baichuan) + [derivations](https://huggingface.co/hiyouga/baichuan-7b-sft)
+- [X] [Aquila 1 & 2](https://huggingface.co/models?search=BAAI/Aquila)
+- [X] [Starcoder models](https://github.com/ggml-org/llama.cpp/pull/3187)
+- [X] [Refact](https://huggingface.co/smallcloudai/Refact-1_6B-fim)
+- [X] [MPT](https://github.com/ggml-org/llama.cpp/pull/3417)
+- [X] [Bloom](https://github.com/ggml-org/llama.cpp/pull/3553)
+- [x] [Yi models](https://huggingface.co/models?search=01-ai/Yi)
+- [X] [StableLM models](https://huggingface.co/stabilityai)
+- [x] [Deepseek models](https://huggingface.co/models?search=deepseek-ai/deepseek)
+- [x] [Qwen models](https://huggingface.co/models?search=Qwen/Qwen)
+- [x] [PLaMo-13B](https://github.com/ggml-org/llama.cpp/pull/3557)
+- [x] [Phi models](https://huggingface.co/models?search=microsoft/phi)
+- [x] [PhiMoE](https://github.com/ggml-org/llama.cpp/pull/11003)
+- [x] [GPT-2](https://huggingface.co/gpt2)
+- [x] [Orion 14B](https://github.com/ggml-org/llama.cpp/pull/5118)
+- [x] [InternLM2](https://huggingface.co/models?search=internlm2)
+- [x] [CodeShell](https://github.com/WisdomShell/codeshell)
+- [x] [Gemma](https://ai.google.dev/gemma)
+- [x] [Mamba](https://github.com/state-spaces/mamba)
+- [x] [Grok-1](https://huggingface.co/keyfan/grok-1-hf)
+- [x] [Xverse](https://huggingface.co/models?search=xverse)
+- [x] [Command-R models](https://huggingface.co/models?search=CohereForAI/c4ai-command-r)
+- [x] [SEA-LION](https://huggingface.co/models?search=sea-lion)
+- [x] [GritLM-7B](https://huggingface.co/GritLM/GritLM-7B) + [GritLM-8x7B](https://huggingface.co/GritLM/GritLM-8x7B)
+- [x] [OLMo](https://allenai.org/olmo)
+- [x] [OLMo 2](https://allenai.org/olmo)
+- [x] [OLMoE](https://huggingface.co/allenai/OLMoE-1B-7B-0924)
+- [x] [Granite models](https://huggingface.co/collections/ibm-granite/granite-code-models-6624c5cec322e4c148c8b330)
+- [x] [GPT-NeoX](https://github.com/EleutherAI/gpt-neox) + [Pythia](https://github.com/EleutherAI/pythia)
+- [x] [Snowflake-Arctic MoE](https://huggingface.co/collections/Snowflake/arctic-66290090abe542894a5ac520)
+- [x] [Smaug](https://huggingface.co/models?search=Smaug)
+- [x] [Poro 34B](https://huggingface.co/LumiOpen/Poro-34B)
+- [x] [Bitnet b1.58 models](https://huggingface.co/1bitLLM)
+- [x] [Flan T5](https://huggingface.co/models?search=flan-t5)
+- [x] [Open Elm models](https://huggingface.co/collections/apple/openelm-instruct-models-6619ad295d7ae9f868b759ca)
+- [x] [ChatGLM3-6b](https://huggingface.co/THUDM/chatglm3-6b) + [ChatGLM4-9b](https://huggingface.co/THUDM/glm-4-9b) + [GLMEdge-1.5b](https://huggingface.co/THUDM/glm-edge-1.5b-chat) + [GLMEdge-4b](https://huggingface.co/THUDM/glm-edge-4b-chat)
+- [x] [GLM-4-0414](https://huggingface.co/collections/THUDM/glm-4-0414-67f3cbcb34dd9d252707cb2e)
+- [x] [SmolLM](https://huggingface.co/collections/HuggingFaceTB/smollm-6695016cad7167254ce15966)
+- [x] [EXAONE-3.0-7.8B-Instruct](https://huggingface.co/LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct)
+- [x] [FalconMamba Models](https://huggingface.co/collections/tiiuae/falconmamba-7b-66b9a580324dd1598b0f6d4a)
+- [x] [Jais](https://huggingface.co/inceptionai/jais-13b-chat)
+- [x] [Bielik-11B-v2.3](https://huggingface.co/collections/speakleash/bielik-11b-v23-66ee813238d9b526a072408a)
+- [x] [RWKV-7](https://huggingface.co/collections/shoumenchougou/rwkv7-gxx-gguf)
+- [x] [RWKV-6](https://github.com/BlinkDL/RWKV-LM)
+- [x] [QRWKV-6](https://huggingface.co/recursal/QRWKV6-32B-Instruct-Preview-v0.1)
+- [x] [GigaChat-20B-A3B](https://huggingface.co/ai-sage/GigaChat-20B-A3B-instruct)
+- [X] [Trillion-7B-preview](https://huggingface.co/trillionlabs/Trillion-7B-preview)
+- [x] [Ling models](https://huggingface.co/collections/inclusionAI/ling-67c51c85b34a7ea0aba94c32)
+- [x] [LFM2 models](https://huggingface.co/collections/LiquidAI/lfm2-686d721927015b2ad73eaa38)
+- [x] [Hunyuan models](https://huggingface.co/collections/tencent/hunyuan-dense-model-6890632cda26b19119c9c5e7)
+- [x] [BailingMoeV2 (Ring/Ling 2.0) models](https://huggingface.co/collections/inclusionAI/ling-v2-68bf1dd2fc34c306c1fa6f86)
+
+#### Multimodal
+
+- [x] [LLaVA 1.5 models](https://huggingface.co/collections/liuhaotian/llava-15-653aac15d994e992e2677a7e), [LLaVA 1.6 models](https://huggingface.co/collections/liuhaotian/llava-16-65b9e40155f60fd046a5ccf2)
+- [x] [BakLLaVA](https://huggingface.co/models?search=SkunkworksAI/Bakllava)
+- [x] [Obsidian](https://huggingface.co/NousResearch/Obsidian-3B-V0.5)
+- [x] [ShareGPT4V](https://huggingface.co/models?search=Lin-Chen/ShareGPT4V)
+- [x] [MobileVLM 1.7B/3B models](https://huggingface.co/models?search=mobileVLM)
+- [x] [Yi-VL](https://huggingface.co/models?search=Yi-VL)
+- [x] [Mini CPM](https://huggingface.co/models?search=MiniCPM)
+- [x] [Moondream](https://huggingface.co/vikhyatk/moondream2)
+- [x] [Bunny](https://github.com/BAAI-DCAI/Bunny)
+- [x] [GLM-EDGE](https://huggingface.co/models?search=glm-edge)
+- [x] [Qwen2-VL](https://huggingface.co/collections/Qwen/qwen2-vl-66cee7455501d7126940800d)
+- [x] [LFM2-VL](https://huggingface.co/collections/LiquidAI/lfm2-vl-68963bbc84a610f7638d5ffa)
+
+</details>
+
+<details>
+<summary>Bindings</summary>
+
+- Python: [ddh0/easy-llama](https://github.com/ddh0/easy-llama)
+- Python: [abetlen/llama-cpp-python](https://github.com/abetlen/llama-cpp-python)
+- Go: [go-skynet/go-llama.cpp](https://github.com/go-skynet/go-llama.cpp)
+- Node.js: [withcatai/node-llama-cpp](https://github.com/withcatai/node-llama-cpp)
+- JS/TS (llama.cpp server client): [lgrammel/modelfusion](https://modelfusion.dev/integration/model-provider/llamacpp)
+- JS/TS (Programmable Prompt Engine CLI): [offline-ai/cli](https://github.com/offline-ai/cli)
+- JavaScript/Wasm (works in browser): [tangledgroup/llama-cpp-wasm](https://github.com/tangledgroup/llama-cpp-wasm)
+- Typescript/Wasm (nicer API, available on npm): [ngxson/wllama](https://github.com/ngxson/wllama)
+- Ruby: [yoshoku/llama_cpp.rb](https://github.com/yoshoku/llama_cpp.rb)
+- Rust (more features): [edgenai/llama_cpp-rs](https://github.com/edgenai/llama_cpp-rs)
+- Rust (nicer API): [mdrokz/rust-llama.cpp](https://github.com/mdrokz/rust-llama.cpp)
+- Rust (more direct bindings): [utilityai/llama-cpp-rs](https://github.com/utilityai/llama-cpp-rs)
+- Rust (automated build from crates.io): [ShelbyJenkins/llm_client](https://github.com/ShelbyJenkins/llm_client)
+- C#/.NET: [SciSharp/LLamaSharp](https://github.com/SciSharp/LLamaSharp)
+- C#/VB.NET (more features - community license): [LM-Kit.NET](https://docs.lm-kit.com/lm-kit-net/index.html)
+- Scala 3: [donderom/llm4s](https://github.com/donderom/llm4s)
+- Clojure: [phronmophobic/llama.clj](https://github.com/phronmophobic/llama.clj)
+- React Native: [mybigday/llama.rn](https://github.com/mybigday/llama.rn)
+- Java: [kherud/java-llama.cpp](https://github.com/kherud/java-llama.cpp)
+- Java: [QuasarByte/llama-cpp-jna](https://github.com/QuasarByte/llama-cpp-jna)
+- Zig: [deins/llama.cpp.zig](https://github.com/Deins/llama.cpp.zig)
+- Flutter/Dart: [netdur/llama_cpp_dart](https://github.com/netdur/llama_cpp_dart)
+- Flutter: [xuegao-tzx/Fllama](https://github.com/xuegao-tzx/Fllama)
+- PHP (API bindings and features built on top of llama.cpp): [distantmagic/resonance](https://github.com/distantmagic/resonance) [(more info)](https://github.com/ggml-org/llama.cpp/pull/6326)
+- Guile Scheme: [guile_llama_cpp](https://savannah.nongnu.org/projects/guile-llama-cpp)
+- Swift [srgtuszy/llama-cpp-swift](https://github.com/srgtuszy/llama-cpp-swift)
+- Swift [ShenghaiWang/SwiftLlama](https://github.com/ShenghaiWang/SwiftLlama)
+- Delphi [Embarcadero/llama-cpp-delphi](https://github.com/Embarcadero/llama-cpp-delphi)
+- Go (no CGo needed): [hybridgroup/yzma](https://github.com/hybridgroup/yzma)
+- Android: [llama.android](/examples/llama.android)
+
+</details>
+
+<details>
+<summary>UIs</summary>
+
+*(to have a project listed here, it should clearly state that it depends on `llama.cpp`)*
+
+- [AI Sublime Text plugin](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (MIT)
+- [BonzAI App](https://apps.apple.com/us/app/bonzai-your-local-ai-agent/id6752847988) (proprietary)
+- [cztomsik/ava](https://github.com/cztomsik/ava) (MIT)
+- [Dot](https://github.com/alexpinel/Dot) (GPL)
+- [eva](https://github.com/ylsdamxssjxxdd/eva) (MIT)
+- [iohub/collama](https://github.com/iohub/coLLaMA) (Apache-2.0)
+- [janhq/jan](https://github.com/janhq/jan) (AGPL)
+- [johnbean393/Sidekick](https://github.com/johnbean393/Sidekick) (MIT)
+- [KanTV](https://github.com/zhouwg/kantv?tab=readme-ov-file) (Apache-2.0)
+- [KodiBot](https://github.com/firatkiral/kodibot) (GPL)
+- [llama.vim](https://github.com/ggml-org/llama.vim) (MIT)
+- [LARS](https://github.com/abgulati/LARS) (AGPL)
+- [Llama Assistant](https://github.com/vietanhdev/llama-assistant) (GPL)
+- [LlamaLib](https://github.com/undreamai/LlamaLib) (Apache-2.0)
+- [LLMFarm](https://github.com/guinmoon/LLMFarm?tab=readme-ov-file) (MIT)
+- [LLMUnity](https://github.com/undreamai/LLMUnity) (MIT)
+- [LMStudio](https://lmstudio.ai/) (proprietary)
+- [LocalAI](https://github.com/mudler/LocalAI) (MIT)
+- [LostRuins/koboldcpp](https://github.com/LostRuins/koboldcpp) (AGPL)
+- [MindMac](https://mindmac.app) (proprietary)
+- [MindWorkAI/AI-Studio](https://github.com/MindWorkAI/AI-Studio) (FSL-1.1-MIT)
+- [Mobile-Artificial-Intelligence/maid](https://github.com/Mobile-Artificial-Intelligence/maid) (MIT)
+- [Mozilla-Ocho/llamafile](https://github.com/Mozilla-Ocho/llamafile) (Apache-2.0)
+- [nat/openplayground](https://github.com/nat/openplayground) (MIT)
+- [nomic-ai/gpt4all](https://github.com/nomic-ai/gpt4all) (MIT)
+- [ollama/ollama](https://github.com/ollama/ollama) (MIT)
+- [oobabooga/text-generation-webui](https://github.com/oobabooga/text-generation-webui) (AGPL)
+- [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) (MIT)
+- [psugihara/FreeChat](https://github.com/psugihara/FreeChat) (MIT)
+- [ptsochantaris/emeltal](https://github.com/ptsochantaris/emeltal) (MIT)
+- [pythops/tenere](https://github.com/pythops/tenere) (AGPL)
+- [ramalama](https://github.com/containers/ramalama) (MIT)
+- [semperai/amica](https://github.com/semperai/amica) (MIT)
+- [withcatai/catai](https://github.com/withcatai/catai) (MIT)
+- [Autopen](https://github.com/blackhole89/autopen) (GPL)
+
+</details>
+
+<details>
+<summary>Tools</summary>
+
+- [akx/ggify](https://github.com/akx/ggify) – download PyTorch models from Hugging Face Hub and convert them to GGML
+- [akx/ollama-dl](https://github.com/akx/ollama-dl) – download models from the Ollama library to be used directly with llama.cpp
+- [crashr/gppm](https://github.com/crashr/gppm) – launch llama.cpp instances utilizing NVIDIA Tesla P40 or P100 GPUs with reduced idle power consumption
+- [gpustack/gguf-parser](https://github.com/gpustack/gguf-parser-go/tree/main/cmd/gguf-parser) - review/check the GGUF file and estimate the memory usage
+- [Styled Lines](https://marketplace.unity.com/packages/tools/generative-ai/styled-lines-llama-cpp-model-292902) (proprietary licensed, async wrapper of inference part for game development in Unity3d with pre-built Mobile and Web platform wrappers and a model example)
+- [unslothai/unsloth](https://github.com/unslothai/unsloth) – 🦥 exports/saves fine-tuned and trained models to GGUF (Apache-2.0)
+
+</details>
+
+<details>
+<summary>Infrastructure</summary>
+
+- [Paddler](https://github.com/intentee/paddler) - Open-source LLMOps platform for hosting and scaling AI in your own infrastructure
+- [GPUStack](https://github.com/gpustack/gpustack) - Manage GPU clusters for running LLMs
+- [llama_cpp_canister](https://github.com/onicai/llama_cpp_canister) - llama.cpp as a smart contract on the Internet Computer, using WebAssembly
+- [llama-swap](https://github.com/mostlygeek/llama-swap) - transparent proxy that adds automatic model switching with llama-server
+- [Kalavai](https://github.com/kalavai-net/kalavai-client) - Crowdsource end to end LLM deployment at any scale
+- [llmaz](https://github.com/InftyAI/llmaz) - ☸️ Easy, advanced inference platform for large language models on Kubernetes.
+- [LLMKube](https://github.com/defilantech/llmkube) - Kubernetes operator for llama.cpp with multi-GPU and Apple Silicon Metal
+  support"
+</details>
+
+<details>
+<summary>Games</summary>
+
+- [Lucy's Labyrinth](https://github.com/MorganRO8/Lucys_Labyrinth) - A simple maze game where agents controlled by an AI model will try to trick you.
+
+</details>
+
+
+## Supported backends
+
+| Backend | Target devices |
+| --- | --- |
+| [Metal](docs/build.md#metal-build) | Apple Silicon |
+| [BLAS](docs/build.md#blas-build) | All |
+| [BLIS](docs/backend/BLIS.md) | All |
+| [SYCL](docs/backend/SYCL.md) | Intel and Nvidia GPU |
+| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
+| [MUSA](docs/build.md#musa) | Moore Threads GPU |
+| [CUDA](docs/build.md#cuda) | Nvidia GPU |
+| [HIP](docs/build.md#hip) | AMD GPU |
+| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
+| [Vulkan](docs/build.md#vulkan) | GPU |
+| [CANN](docs/build.md#cann) | Ascend NPU |
+| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
+| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
+| [WebGPU [In Progress]](docs/build.md#webgpu) | All |
+| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
+| [Hexagon [In Progress]](docs/backend/snapdragon/README.md) | Snapdragon |
+| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
+
+
+{n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0); // altup & laurel layer.per_layer_inp_gate = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE, "weight", i), {n_embd, n_embd_altup}, 0); layer.per_layer_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ, "weight", i), {n_embd_altup, n_embd}, 0); layer.per_layer_post_norm = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0); layer.altup_correct_coef = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_COEF, "weight", i), {n_altup, n_altup}, 0); layer.altup_correct_scale = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_SCALE, "weight", i), {n_embd}, 0); layer.altup_predict_coef = create_tensor(tn(LLM_TENSOR_ALTUP_PREDICT_COEF, "weight", i), {n_altup, n_altup * n_altup}, 0); layer.altup_router = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER, "weight", i), {n_embd, n_altup}, 0); layer.altup_router_norm = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER_NORM, "weight", i), {n_embd}, 0); layer.laurel_l = create_tensor(tn(LLM_TENSOR_LAUREL_L, "weight", i), {n_embd, laurel_rank}, 0); layer.laurel_r = create_tensor(tn(LLM_TENSOR_LAUREL_R, "weight", i), {laurel_rank, n_embd}, 0); layer.laurel_post_norm = create_tensor(tn(LLM_TENSOR_LAUREL_POST_NORM, "weight", i), {n_embd}, 0); } } break; case LLM_ARCH_GEMMA4: { const uint32_t n_embd_per_layer = hparams.n_embd_per_layer; const int64_t n_ff_exp = hparams.n_ff_exp; if (n_embd_head_k != n_embd_head_v) { throw std::runtime_error("Gemma 4 requires n_embd_head_k == n_embd_head_v"); } if (hparams.n_embd_head_k_swa != hparams.n_embd_head_v_swa) { throw std::runtime_error("Gemma 4 requires n_embd_head_k_swa == n_embd_head_v_swa"); } output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if output is NULL, init from the input tok embed if (output == NULL) { output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); } tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); if (n_embd_per_layer > 0) { tok_embd_per_layer = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_per_layer * n_layer, n_vocab}, 0); per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_per_layer * n_layer}, 0); per_layer_proj_norm = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM, "weight"), {n_embd_per_layer}, 0); } output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); int rope_freqs_flag = 0; for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; const int64_t n_head = hparams.n_head(i); const int64_t n_embd_head = hparams.n_embd_head_k(i); const int64_t n_embd_k = hparams.n_embd_k_gqa(i); const int64_t n_embd_v = hparams.n_embd_v_gqa(i); layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); // note: use_alternative_attention (v_proj is optional, if it's not present, use k_proj) layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head * n_head}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_k}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_v}, TENSOR_NOT_REQUIRED); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head * n_head, n_embd}, 0); layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head}, 0); layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head}, 0); layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0); layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1u}, TENSOR_NOT_REQUIRED); if (!hparams.is_swa(i)) { // full_attention layers use rope_freqs for proportional rope layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_embd_head/2}, rope_freqs_flag); rope_freqs_flag = TENSOR_DUPLICATED; } // handle use_double_wide_mlp int64_t n_ff_cur = hparams.n_ff(i); // for expert layers, we use normal FFN as shared expert (same as python code) layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff_cur}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff_cur}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff_cur, n_embd}, 0); layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0); // MoE router layer.ffn_gate_inp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert}, TENSOR_NOT_REQUIRED); bool has_expert = layer.ffn_gate_inp != nullptr; // norm if (has_expert) { layer.ffn_gate_inp_s = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "scale", i), {n_embd}, 0); layer.ffn_pre_norm_2 = create_tensor(tn(LLM_TENSOR_FFN_PRE_NORM_2, "weight", i), {n_embd}, 0); layer.ffn_post_norm_1 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_1, "weight", i), {n_embd}, 0); layer.ffn_post_norm_2 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_2, "weight", i), {n_embd}, 0); // MoE FFN layer.ffn_gate_up_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", i), {n_embd, n_ff_exp * 2, n_expert}, 0); layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp, n_embd, n_expert}, 0); // per-expert scale will be loaded as down_exps_s at the end of the current switch case } // per-layer embeddings if (n_embd_per_layer > 0) { layer.per_layer_inp_gate = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE, "weight", i), {n_embd, n_embd_per_layer}, 0); layer.per_layer_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ, "weight", i), {n_embd_per_layer, n_embd}, 0); layer.per_layer_post_norm = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0); } } } break; case LLM_ARCH_STARCODER2: { tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if output is NULL, init from the input tok embed if (output == NULL) { output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); } for (int i = 0; i < n_layer; ++i) { auto & layer = layers[i]; layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0); layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i), {n_embd}, 0); layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd}, 0); layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_gqa}, 0); layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0); // optional bias tensors layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "bias", i), {n_embd}, 0); layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K, "bias", i), {n_embd_gqa}, 0); layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V, "bias", i), {n_embd_gqa}, 0); layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0); layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0); layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i), {n_embd}, 0); layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd}, 0); layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff}, 0); // optional bias tensors layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, 0); layer.ffn_up_b = create_tensor(tn(LLM_TENSOR_FFN_UP , "bias", i), { n_ff}, 0); } } break; case LLM_ARCH_MAMBA: { const int64_t d_conv = hparams.ssm_d_conv; const int64_t d_inner = hparams.ssm_d_inner; const int64_t d_state = hparams.ssm_d_state; const int64_t dt_rank = hparams.ssm_dt_rank; // only an expansion factor of 2 is supported for now if (2 * n_embd != d_inner) { throw std::runtime_error("only an expansion factor of 2 is supported for now"); } tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0); // output output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0); output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED); // if output is NULL, init from the input tok embed, duplicated to allow offloading // ===== FILE: common/arg.cpp ===== common_params_print_completion(ctx_arg); exit(0); } params.lr.init(); } catch (const std::invalid_argument & ex) { fprintf(stderr, "%s\n", ex.what()); ctx_arg.params = params_org; return false; } catch (std::exception & ex) { fprintf(stderr, "%s\n", ex.what()); exit(1); // for other exceptions, we exit with status code 1 } return true; } static std::string list_builtin_chat_templates() { std::vector<const char *> supported_tmpl; int32_t res = llama_chat_builtin_templates(nullptr, 0); supported_tmpl.resize(res); res = llama_chat_builtin_templates(supported_tmpl.data(), supported_tmpl.size()); std::ostringstream msg; for (auto & tmpl : supported_tmpl) { msg << tmpl << (&tmpl == &supported_tmpl.back() ? "" : ", "); } return msg.str(); } bool common_arg_utils::is_truthy(const std::string & value) { return value == "on" || value == "enabled" || value == "true" || value == "1"; } bool common_arg_utils::is_falsey(const std::string & value) { return value == "off" || value == "disabled" || value == "false" || value == "0"; } bool common_arg_utils::is_autoy(const std::string & value) { return value == "auto" || value == "-1"; } // Simple CSV parser that handles quoted fields and escaped quotes // example: // input: value1,"value, with, commas","value with ""escaped"" quotes",value4 // output: [value1] [value, with, commas] [value with "escaped" quotes] [value4] static std::vector<std::string> parse_csv_row(const std::string& input) { std::vector<std::string> fields; std::string field; bool in_quotes = false; for (size_t i = 0; i < input.length(); ++i) { char ch = input[i]; if (ch == '"') { if (!in_quotes) { // start of quoted field (only valid if at beginning of field) if (!field.empty()) { // quote appeared in middle of unquoted field, treat as literal field += '"'; } else { in_quotes = true; // start } } else { if (i + 1 < input.length() && input[i + 1] == '"') { // escaped quote: "" field += '"'; ++i; // skip the next quote } else { in_quotes = false; // end } } } else if (ch == ',') { if (in_quotes) { field += ','; } else { fields.push_back(std::move(field)); field.clear(); } } else { field += ch; } } // Add the last field fields.push_back(std::move(field)); return fields; } common_params_context common_params_parser_init(common_params & params, llama_example ex, void(*print_usage)(int, char **)) { // per-example default params // we define here to make sure it's included in llama-gen-docs if (ex == LLAMA_EXAMPLE_COMPLETION) { params.use_jinja = false; // disable jinja by default } else if (ex == LLAMA_EXAMPLE_MTMD) { params.use_jinja = false; // disable jinja by default params.sampling.temp = 0.2; // lower temp by default for better quality } else if (ex == LLAMA_EXAMPLE_SERVER) { params.n_parallel = -1; // auto by default } params.use_color = tty_can_use_colors(); // load dynamic backends ggml_backend_load_all(); common_params_context ctx_arg(params); ctx_arg.print_usage = print_usage; ctx_arg.ex = ex; std::string sampler_type_chars; std::string sampler_type_names; for (const auto & sampler : params.sampling.samplers) { sampler_type_chars += common_sampler_type_to_chr(sampler); sampler_type_names += common_sampler_type_to_str(sampler) + // [truncated]

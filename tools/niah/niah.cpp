@@ -160,6 +160,16 @@ static std::vector<niah_fixture> load_fixtures(const std::string &path) {
             fix.id = j.value("id", "");
             fix.type = j.value("type", "");
             fix.filler_text = j.value("filler_text", "");
+            std::string ctx_path = j.value("context_file", "");
+            if (!ctx_path.empty() && fix.filler_text.empty()) {
+                std::ifstream ctx_f(ctx_path);
+                if (ctx_f.is_open()) {
+                    fix.filler_text = std::string(std::istreambuf_iterator<char>(ctx_f),
+                                                  std::istreambuf_iterator<char>());
+                } else {
+                    LOG_WRN("context_file not found: %s\n", ctx_path.c_str());
+                }
+            }
             fix.question = j.value("question", "");
             fix.context_tokens = j.value("context_tokens", 0);
             if (j.contains("expected_answer_substrings")) {

@@ -1,0 +1,1679 @@
+
+
+// ===== FILE: ggml/src/ggml.c =====
+
+        .from_float_ref           = (ggml_from_float_t)quantize_row_iq4_nl_ref,
+    },
+    [GGML_TYPE_IQ4_XS] = {
+        .type_name                = "iq4_xs",
+        .blck_size                = QK_K,
+        .type_size                = sizeof(block_iq4_xs),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_iq4_xs,
+        .from_float_ref           = (ggml_from_float_t)quantize_row_iq4_xs_ref,
+    },
+    [GGML_TYPE_Q8_K] = {
+        .type_name                = "q8_K",
+        .blck_size                = QK_K,
+        .type_size                = sizeof(block_q8_K),
+        .is_quantized             = true,
+    },
+    [GGML_TYPE_BF16] = {
+        .type_name                = "bf16",
+        .blck_size                = 1,
+        .type_size                = sizeof(ggml_bf16_t),
+        .is_quantized             = false,
+        .to_float                 = (ggml_to_float_t) ggml_bf16_to_fp32_row,
+        .from_float_ref           = (ggml_from_float_t) ggml_fp32_to_bf16_row_ref,
+    },
+    [31] = { // GGML_TYPE_Q4_0_4_4
+        .type_name                = "TYPE_Q4_0_4_4 REMOVED, use Q4_0 with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+    [32] = { // GGML_TYPE_Q4_0_4_8
+        .type_name                = "TYPE_Q4_0_4_8 REMOVED, use Q4_0 with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+    [33] = { // GGML_TYPE_Q4_0_8_8
+        .type_name                = "TYPE_Q4_0_8_8 REMOVED, use Q4_0 with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+    [GGML_TYPE_TQ1_0] = {
+        .type_name                = "tq1_0",
+        .blck_size                = QK_K,
+        .type_size                = sizeof(block_tq1_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq1_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq1_0_ref,
+    },
+    [GGML_TYPE_TQ2_0] = {
+        .type_name                = "tq2_0",
+        .blck_size                = QK_K,
+        .type_size                = sizeof(block_tq2_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq2_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq2_0_ref,
+    },
+    [36] = { // GGML_TYPE_IQ4_NL_4_4
+        .type_name                = "TYPE_IQ4_NL_4_4 REMOVED, use IQ4_NL with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+    [37] = { // GGML_TYPE_IQ4_NL_4_8
+        .type_name                = "TYPE_IQ4_NL_4_8 REMOVED, use IQ4_NL with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+    [38] = { // GGML_TYPE_IQ4_NL_8_8
+        .type_name                = "TYPE_IQ4_NL_8_8 REMOVED, use IQ4_NL with runtime repacking",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
+};
+
+const struct ggml_type_traits * ggml_get_type_traits(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return &type_traits[type];
+}
+
+//
+// ggml object
+//
+
+struct ggml_object {
+    size_t offs;
+    size_t size;
+
+    struct ggml_object * next;
+
+    enum ggml_object_type type;
+
+    char padding[4];
+};
+
+static const size_t GGML_OBJECT_SIZE = sizeof(struct ggml_object);
+
+//
+// ggml context
+//
+
+struct ggml_context {
+    size_t mem_size;
+    void * mem_buffer;
+    bool   mem_buffer_owned;
+    bool   no_alloc;
+
+    int    n_objects;
+
+    struct ggml_object * objects_begin;
+    struct ggml_object * objects_end;
+};
+
+//
+// data types
+//
+
+static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+    "NONE",
+
+    "DUP",
+    "ADD",
+    "ADD_ID",
+    "ADD1",
+    "ACC",
+    "SUB",
+    "MUL",
+    "DIV",
+    "SQR",
+    "SQRT",
+    "LOG",
+    "SIN",
+    "COS",
+    "SUM",
+    "SUM_ROWS",
+    "CUMSUM",
+    "MEAN",
+    "ARGMAX",
+    "COUNT_EQUAL",
+    "REPEAT",
+    "REPEAT_BACK",
+    "CONCAT",
+    "SILU_BACK",
+    "NORM",
+    "RMS_NORM",
+    "RMS_NORM_BACK",
+    "GROUP_NORM",
+    "L2_NORM",
+
+    "MUL_MAT",
+    "MUL_MAT_ID",
+    "OUT_PROD",
+
+    "SCALE",
+    "SET",
+    "CPY",
+    "CONT",
+    "RESHAPE",
+    "VIEW",
+    "PERMUTE",
+    "TRANSPOSE",
+    "GET_ROWS",
+    "GET_ROWS_BACK",
+    "SET_ROWS",
+    "DIAG",
+    "DIAG_MASK_INF",
+    "DIAG_MASK_ZERO",
+    "SOFT_MAX",
+    "SOFT_MAX_BACK",
+    "ROPE",
+    "ROPE_BACK",
+    "CLAMP",
+    "CONV_TRANSPOSE_1D",
+    "IM2COL",
+    "IM2COL_BACK",
+    "IM2COL_3D",
+    "CONV_2D",
+    "CONV_3D",
+    "CONV_2D_DW",
+    "CONV_TRANSPOSE_2D",
+    "POOL_1D",
+    "POOL_2D",
+    "POOL_2D_BACK",
+    "UPSCALE",
+    "PAD",
+    "PAD_REFLECT_1D",
+    "ROLL",
+    "ARANGE",
+    "TIMESTEP_EMBEDDING",
+    "ARGSORT",
+    "TOP_K",
+    "LEAKY_RELU",
+    "TRI",
+    "FILL",
+
+    "FLASH_ATTN_EXT",
+    "FLASH_ATTN_BACK",
+    "SSM_CONV",
+    "SSM_SCAN",
+    "WIN_PART",
+    "WIN_UNPART",
+    "GET_REL_POS",
+    "ADD_REL_POS",
+    "RWKV_WKV6",
+    "GATED_LINEAR_ATTN",
+    "RWKV_WKV7",
+    "SOLVE_TRI",
+    "GATED_DELTA_NET",
+    "TURBO_WHT",
+
+    "UNARY",
+
+    "MAP_CUSTOM1",
+    "MAP_CUSTOM2",
+    "MAP_CUSTOM3",
+
+    "CUSTOM",
+
+    "CROSS_ENTROPY_LOSS",
+    "CROSS_ENTROPY_LOSS_BACK",
+    "OPT_STEP_ADAMW",
+    "OPT_STEP_SGD",
+
+    "GLU",
+
+    "PFLASH_BSA_ATTN",
+};
+
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
+
+static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+    "none",
+
+    "x",
+    "x+y",
+    "x[i]+y",
+    "x+y",
+    "view(x,nb,offset)+=y->x",
+    "x-y",
+    "x*y",
+    "x/y",
+    "x^2",
+    "√x",
+    "log(x)",
+    "sin(x)",
+    "cos(x)",
+    "Σx",
+    "Σx_k",
+    "cumsum(x)",
+    "Σx/n",
+    "argmax(x)",
+    "count_equal(x)",
+    "repeat(x)",
+    "repeat_back(x)",
+    "concat(x, y)",
+    "silu_back(x)",
+    "norm(x)",
+    "rms_norm(x)",
+    "rms_norm_back(x)",
+    "group_norm(x)",
+    "l2_norm(x)",
+
+    "X*Y",
+    "X[i]*Y",
+    "X*Y",
+
+    "x*v",
+    "y-\\>view(x)",
+    "x-\\>y",
+    "cont(x)",
+    "reshape(x)",
+    "view(x)",
+    "permute(x)",
+    "transpose(x)",
+    "get_rows(x)",
+    "get_rows_back(x)",
+    "set_rows(x)",
+    "diag(x)",
+    "diag_mask_inf(x)",
+    "diag_mask_zero(x)",
+    "soft_max(x)",
+    "soft_max_back(x)",
+    "rope(x)",
+    "rope_back(x)",
+    "clamp(x)",
+    "conv_transpose_1d(x)",
+    "im2col(x)",
+    "im2col_back(x)",
+    "im2col_3d(x)",
+    "conv_2d(x)",
+    "conv_3d(x)",
+    "conv_2d_dw(x)",
+    "conv_transpose_2d(x)",
+    "pool_1d(x)",
+    "pool_2d(x)",
+    "pool_2d_back(x)",
+    "upscale(x)",
+    "pad(x)",
+    "pad_reflect_1d(x)",
+    "roll(x)",
+    "arange(start, stop, step)",
+    "timestep_embedding(timesteps, dim, max_period)",
+    "argsort(x)",
+    "top_k(x)",
+    "leaky_relu(x)",
+    "tri(x)",
+    "fill(x, c)",
+
+    "flash_attn_ext(x)",
+    "flash_attn_back(x)",
+    "ssm_conv(x)",
+    "ssm_scan(x)",
+    "win_part(x)",
+    "win_unpart(x)",
+    "get_rel_pos(x)",
+    "add_rel_pos(x)",
+    "rwkv_wkv6(k, v, r, tf, td, s)",
+    "gated_linear_attn(k, v, q, gate, s)",
+    "rwkv_wkv7(r, w, k, v, a, b, s)",
+    "A X = B, A triangular, solve X",
+    "gated_delta_net(q, k, v, g, beta, s)",
+    "turbo_wht(a)",
+
+    "unary(x)",
+
+    "map_custom(x)",
+    "map_custom(x,y)",
+    "map_custom(x,y,z)",
+
+    "custom(x)",
+
+    "cross_entropy_loss(x,y)",
+    "cross_entropy_loss_back(x,y)",
+    "adamw(x)",
+    "sgd(x)",
+
+    "glu(x)",
+
+    "pflash_bsa_attn(x)",
+};
+
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
+
+static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
+
+static const char * GGML_UNARY_OP_NAME[GGML_UNARY_OP_COUNT] = {
+    "ABS",
+    "SGN",
+    "NEG",
+    "STEP",
+    "TANH",
+    "ELU",
+    "RELU",
+    "SIGMOID",
+    "GELU",
+    "GELU_QUICK",
+    "SILU",
+    "HARDSWISH",
+    "HARDSIGMOID",
+    "EXP",
+    "EXPM1",
+    "SOFTPLUS",
+    "GELU_ERF",
+    "XIELU",
+    "FLOOR",
+    "CEIL",
+    "ROUND",
+    "TRUNC",
+};
+
+static_assert(GGML_UNARY_OP_COUNT == 22, "GGML_UNARY_OP_COUNT != 22");
+
+static const char * GGML_GLU_OP_NAME[GGML_GLU_OP_COUNT] = {
+    "REGLU",
+    "GEGLU",
+    "SWIGLU",
+    "SWIGLU_OAI",
+    "GEGLU_ERF",
+    "GEGLU_QUICK",
+};
+
+static_assert(GGML_GLU_OP_COUNT == 6, "GGML_GLU_OP_COUNT != 6");
+
+
+static_assert(sizeof(struct ggml_object)%GGML_MEM_ALIGN == 0, "ggml_object size must be a multiple of GGML_MEM_ALIGN");
+static_assert(sizeof(struct ggml_tensor)%GGML_MEM_ALIGN == 0, "ggml_tensor size must be a multiple of GGML_MEM_ALIGN");
+
+
+////////////////////////////////////////////////////////////////////////////////
+
+void ggml_print_object(const struct ggml_object * obj) {
+    GGML_LOG_INFO(" - ggml_object: type = %d, offset = %zu, size = %zu, next = %p\n",
+            obj->type, obj->offs, obj->size, (const void *) obj->next);
+}
+
+void ggml_print_objects(const struct ggml_context * ctx) {
+    struct ggml_object * obj = ctx->objects_begin;
+
+    GGML_LOG_INFO("%s: objects in context %p:\n", __func__, (const void *) ctx);
+
+    while (obj != NULL) {
+        ggml_print_object(obj);
+        obj = obj->next;
+    }
+
+    GGML_LOG_INFO("%s: --- end ---\n", __func__);
+}
+
+int64_t ggml_nelements(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[0]*tensor->ne[1]*tensor->ne[2]*tensor->ne[3];
+}
+
+int64_t ggml_nrows(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[1]*tensor->ne[2]*tensor->ne[3];
+}
+
+size_t ggml_nbytes(const struct ggml_tensor * tensor) {
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (tensor->ne[i] <= 0) {
+            return 0;
+        }
+    }
+
+    size_t nbytes;
+    const size_t blck_size = ggml_blck_size(tensor->type);
+    if (blck_size == 1) {
+        nbytes = ggml_type_size(tensor->type);
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
+        }
+    }
+    else {
+        nbytes = tensor->ne[0]*tensor->nb[0]/blck_size;
+        for (int i = 1; i < GGML_MAX_DIMS; ++i) {
+            nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
+        }
+    }
+
+    return nbytes;
+}
+
+size_t ggml_nbytes_pad(const struct ggml_tensor * tensor) {
+    return GGML_PAD(ggml_nbytes(tensor), GGML_MEM_ALIGN);
+}
+
+int64_t ggml_blck_size(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return type_traits[type].blck_size;
+}
+
+size_t ggml_type_size(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return type_traits[type].type_size;
+}
+
+size_t ggml_row_size(enum ggml_type type, int64_t ne) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    assert(ne % ggml_blck_size(type) == 0);
+    return ggml_type_size(type)*ne/ggml_blck_size(type);
+}
+
+double ggml_type_sizef(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return ((double)(type_traits[type].type_size))/type_traits[type].blck_size;
+}
+
+const char * ggml_type_name(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return type_traits[type].type_name;
+}
+
+bool ggml_is_quantized(enum ggml_type type) {
+    assert(type >= 0);
+    assert(type < GGML_TYPE_COUNT);
+    return type_traits[type].is_quantized;
+}
+
+const char * ggml_op_name(enum ggml_op op) {
+    return GGML_OP_NAME[op];
+}
+
+const char * ggml_op_symbol(enum ggml_op op) {
+    return GGML_OP_SYMBOL[op];
+}
+
+const char * ggml_unary_op_name(enum ggml_unary_op op) {
+    return GGML_UNARY_OP_NAME[op];
+}
+
+const char * ggml_glu_op_name(enum ggml_glu_op op) {
+    return GGML_GLU_OP_NAME[op];
+}
+
+const char * ggml_op_desc(const struct ggml_tensor * t) {
+    if (t->op == GGML_OP_UNARY) {
+        enum ggml_unary_op uop = ggml_get_unary_op(t);
+        return ggml_unary_op_name(uop);
+    }
+    if (t->op == GGML_OP_GLU) {
+        enum ggml_glu_op gop = ggml_get_glu_op(t);
+        return ggml_glu_op_name(gop);
+    }
+    return ggml_op_name(t->op);
+}
+
+size_t ggml_element_size(const struct ggml_tensor * tensor) {
+    return ggml_type_size(tensor->type);
+}
+
+bool ggml_is_scalar(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[0] == 1 && tensor->ne[1] == 1 && tensor->ne[2] == 1 && tensor->ne[3] == 1;
+}
+
+bool ggml_is_vector(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[1] == 1 && tensor->ne[2] == 1 && tensor->ne[3] == 1;
+}
+
+bool ggml_is_matrix(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[2] == 1 && tensor->ne[3] == 1;
+}
+
+bool ggml_is_3d(const struct ggml_tensor * tensor) {
+    return tensor->ne[3] == 1;
+}
+
+int ggml_n_dims(const struct ggml_tensor * tensor) {
+    for (int i = GGML_MAX_DIMS - 1; i >= 1; --i) {
+        if (tensor->ne[i] > 1) {
+            return i + 1;
+        }
+    }
+    return 1;
+}
+
+enum ggml_type ggml_ftype_to_ggml_type(enum ggml_ftype ftype) {
+    enum ggml_type wtype = GGML_TYPE_COUNT;
+
+    switch (ftype) {
+        case GGML_FTYPE_ALL_F32:              wtype = GGML_TYPE_F32;   break;
+        case GGML_FTYPE_MOSTLY_F16:           wtype = GGML_TYPE_F16;   break;
+        case GGML_FTYPE_MOSTLY_BF16:          wtype = GGML_TYPE_BF16;  break;
+        case GGML_FTYPE_MOSTLY_Q4_0:          wtype = GGML_TYPE_Q4_0;  break;
+        case GGML_FTYPE_MOSTLY_Q4_1:          wtype = GGML_TYPE_Q4_1;  break;
+        case GGML_FTYPE_MOSTLY_Q5_0:          wtype = GGML_TYPE_Q5_0;  break;
+        case GGML_FTYPE_MOSTLY_Q5_1:          wtype = GGML_TYPE_Q5_1;  break;
+        case GGML_FTYPE_MOSTLY_Q8_0:          wtype = GGML_TYPE_Q8_0;  break;
+        case GGML_FTYPE_MOSTLY_MXFP4:         wtype = GGML_TYPE_MXFP4; break;
+        case GGML_FTYPE_MOSTLY_NVFP4:         wtype = GGML_TYPE_NVFP4; break;
+        case GGML_FTYPE_MOSTLY_Q2_K:          wtype = GGML_TYPE_Q2_K;  break;
+        case GGML_FTYPE_MOSTLY_Q3_K:          wtype = GGML_TYPE_Q3_K;  break;
+        case GGML_FTYPE_MOSTLY_Q4_K:          wtype = GGML_TYPE_Q4_K;  break;
+        case GGML_FTYPE_MOSTLY_Q5_K:          wtype = GGML_TYPE_Q5_K;  break;
+        case GGML_FTYPE_MOSTLY_Q6_K:          wtype = GGML_TYPE_Q6_K;  break;
+        case GGML_FTYPE_MOSTLY_IQ2_XXS:       wtype = GGML_TYPE_IQ2_XXS;  break;
+        case GGML_FTYPE_MOSTLY_IQ2_XS:        wtype = GGML_TYPE_IQ2_XS;   break;
+        case GGML_FTYPE_MOSTLY_IQ3_XXS:       wtype = GGML_TYPE_IQ3_XXS;  break;
+        case GGML_FTYPE_MOSTLY_IQ1_S:         wtype = GGML_TYPE_IQ1_S;    break;
+        case GGML_FTYPE_MOSTLY_IQ1_M:         wtype = GGML_TYPE_IQ1_M;    break;
+        case GGML_FTYPE_MOSTLY_IQ4_NL:        wtype = GGML_TYPE_IQ4_NL;   break;
+        case GGML_FTYPE_MOSTLY_IQ4_XS:        wtype = GGML_TYPE_IQ4_XS;   break;
+        case GGML_FTYPE_MOSTLY_IQ3_S:         wtype = GGML_TYPE_IQ3_S;    break;
+        case GGML_FTYPE_MOSTLY_IQ2_S:         wtype = GGML_TYPE_IQ2_S;    break;
+        case GGML_FTYPE_UNKNOWN:              wtype = GGML_TYPE_COUNT; break;
+        case GGML_FTYPE_MOSTLY_Q4_1_SOME_F16: wtype = GGML_TYPE_COUNT; break;
+    }
+
+    GGML_ASSERT(wtype != GGML_TYPE_COUNT);
+
+    return wtype;
+}
+
+size_t ggml_tensor_overhead(void) {
+    return GGML_OBJECT_SIZE + GGML_TENSOR_SIZE;
+}
+
+bool ggml_is_transposed(const struct ggml_tensor * tensor) {
+    return tensor->nb[0] > tensor->nb[1];
+}
+
+static bool ggml_is_contiguous_n(const struct ggml_tensor * tensor, int n) {
+    size_t next_nb = ggml_type_size(tensor->type);
+
+
+// ===== FILE: ggml/include/ggml.h =====
+
+//
+// The data of the tensor is accessed via the "data" pointer. For example:
+//
+//   {
+//       const int nx = 2;
+//       const int ny = 3;
+//
+//       struct ggml_tensor * a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nx, ny);
+//
+//       for (int y = 0; y < ny; y++) {
+//           for (int x = 0; x < nx; x++) {
+//               *(float *) ((char *) a->data + y*a->nb[1] + x*a->nb[0]) = x + y;
+//           }
+//       }
+//
+//       ...
+//   }
+//
+// Alternatively, there are helper functions, such as ggml_get_f32_1d() and ggml_set_f32_1d() that can be used.
+//
+// ## The matrix multiplication operator (ggml_mul_mat)
+//
+// TODO
+//
+//
+// ## Multi-threading
+//
+// TODO
+//
+//
+// ## Overview of ggml.c
+//
+// TODO
+//
+//
+// ## SIMD optimizations
+//
+// TODO
+//
+//
+// ## Debugging ggml
+//
+// TODO
+//
+//
+
+#ifdef GGML_SHARED
+#    if defined(_WIN32) && !defined(__MINGW32__)
+#        ifdef GGML_BUILD
+#            define GGML_API __declspec(dllexport) extern
+#        else
+#            define GGML_API __declspec(dllimport) extern
+#        endif
+#    else
+#        define GGML_API __attribute__ ((visibility ("default")))
+#    endif
+#else
+#    define GGML_API extern
+#endif
+
+// TODO: support for clang
+#ifdef __GNUC__
+#    define GGML_DEPRECATED(func, hint) func __attribute__((deprecated(hint)))
+#elif defined(_MSC_VER)
+#    define GGML_DEPRECATED(func, hint) __declspec(deprecated(hint)) func
+#else
+#    define GGML_DEPRECATED(func, hint) func
+#endif
+
+#ifndef __GNUC__
+#    define GGML_ATTRIBUTE_FORMAT(...)
+#elif defined(__MINGW32__) && !defined(__clang__)
+#    define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
+#else
+#    define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#endif
+
+#if defined(_WIN32) && !defined(_WIN32_WINNT)
+#    define _WIN32_WINNT 0x0A00
+#endif
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#define GGML_FILE_MAGIC   0x67676d6c // "ggml"
+#define GGML_FILE_VERSION 2
+
+#define GGML_QNT_VERSION        2    // bump this on quantization format changes
+#define GGML_QNT_VERSION_FACTOR 1000 // do not change this
+
+#define GGML_MAX_DIMS           4
+#define GGML_MAX_PARAMS         2048
+#define GGML_MAX_SRC            10
+#define GGML_MAX_N_THREADS      512
+#define GGML_MAX_OP_PARAMS      64
+
+#ifndef GGML_MAX_NAME
+#   define GGML_MAX_NAME        64
+#endif
+
+#define GGML_DEFAULT_N_THREADS  4
+#define GGML_DEFAULT_GRAPH_SIZE 2048
+
+#if UINTPTR_MAX == 0xFFFFFFFF
+    #define GGML_MEM_ALIGN 4
+#elif defined(__EMSCRIPTEN__)
+// emscripten uses max_align_t == 8, so we need GGML_MEM_ALIGN == 8 for 64-bit wasm.
+// (for 32-bit wasm, the first conditional is true and GGML_MEM_ALIGN stays 4.)
+// ref: https://github.com/ggml-org/llama.cpp/pull/18628
+    #define GGML_MEM_ALIGN 8
+#else
+    #define GGML_MEM_ALIGN 16
+#endif
+
+#define GGML_EXIT_SUCCESS 0
+#define GGML_EXIT_ABORTED 1
+
+// TODO: convert to enum https://github.com/ggml-org/llama.cpp/pull/16187#discussion_r2388538726
+#define GGML_ROPE_TYPE_NORMAL 0
+#define GGML_ROPE_TYPE_NEOX   2
+#define GGML_ROPE_TYPE_MROPE  8
+#define GGML_ROPE_TYPE_VISION 24
+#define GGML_ROPE_TYPE_IMROPE 40 // binary: 101000
+
+#define GGML_MROPE_SECTIONS   4
+
+#define GGML_UNUSED(x) (void)(x)
+#ifdef __CUDACC__
+template<typename... Args>
+__host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexcept {}
+#define GGML_UNUSED_VARS(...) ggml_unused_vars_impl(__VA_ARGS__)
+#else
+#define GGML_UNUSED_VARS(...) do { (void)sizeof((__VA_ARGS__, 0)); } while(0)
+#endif // __CUDACC__
+
+#define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
+
+#ifndef NDEBUG
+#   define GGML_UNREACHABLE() do { fprintf(stderr, "statement should be unreachable\n"); abort(); } while(0)
+#elif defined(__GNUC__)
+#   define GGML_UNREACHABLE() __builtin_unreachable()
+#elif defined(_MSC_VER)
+#   define GGML_UNREACHABLE() __assume(0)
+#else
+#   define GGML_UNREACHABLE() ((void) 0)
+#endif
+
+#ifdef __cplusplus
+#   define GGML_NORETURN [[noreturn]]
+#elif defined(_MSC_VER)
+#   define GGML_NORETURN __declspec(noreturn)
+#else
+#   define GGML_NORETURN _Noreturn
+#endif
+
+#define GGML_ABORT(...) ggml_abort(__FILE__, __LINE__, __VA_ARGS__)
+#define GGML_ASSERT(x) if (!(x)) GGML_ABORT("GGML_ASSERT(%s) failed", #x)
+
+// used to copy the number of elements and stride in bytes of tensors into local variables.
+// main purpose is to reduce code duplication and improve readability.
+//
+// example:
+//
+//    GGML_TENSOR_LOCALS(int64_t, ne1, src1, ne);
+//    GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb);
+//
+#define GGML_TENSOR_LOCALS_1(type, prefix, pointer, array) \
+    const type prefix##0 = (pointer) ? (pointer)->array[0] : 0; \
+    GGML_UNUSED(prefix##0);
+#define GGML_TENSOR_LOCALS_2(type, prefix, pointer, array) \
+    GGML_TENSOR_LOCALS_1    (type, prefix, pointer, array) \
+    const type prefix##1 = (pointer) ? (pointer)->array[1] : 0; \
+    GGML_UNUSED(prefix##1);
+#define GGML_TENSOR_LOCALS_3(type, prefix, pointer, array) \
+    GGML_TENSOR_LOCALS_2    (type, prefix, pointer, array) \
+    const type prefix##2 = (pointer) ? (pointer)->array[2] : 0; \
+    GGML_UNUSED(prefix##2);
+#define GGML_TENSOR_LOCALS(type, prefix, pointer, array) \
+    GGML_TENSOR_LOCALS_3  (type, prefix, pointer, array) \
+    const type prefix##3 = (pointer) ? (pointer)->array[3] : 0; \
+    GGML_UNUSED(prefix##3);
+
+#define GGML_TENSOR_UNARY_OP_LOCALS \
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
+
+#define GGML_TENSOR_BINARY_OP_LOCALS \
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne1, src1, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
+
+#define GGML_TENSOR_TERNARY_OP_LOCALS \
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne1, src1, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne2, src2, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb2, src2, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
+
+#define GGML_TENSOR_BINARY_OP_LOCALS01 \
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb) \
+    GGML_TENSOR_LOCALS(int64_t, ne1, src1, ne) \
+    GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb)
+
+#ifdef  __cplusplus
+extern "C" {
+#endif
+
+    // Function type used in fatal error callbacks
+    typedef void (*ggml_abort_callback_t)(const char * error_message);
+
+    // Set the abort callback (passing null will restore original abort functionality: printing a message to stdout)
+    // Returns the old callback for chaining
+    GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t callback);
+
+    GGML_NORETURN GGML_ATTRIBUTE_FORMAT(3, 4)
+    GGML_API void ggml_abort(const char * file, int line, const char * fmt, ...);
+
+    enum ggml_status {
+        GGML_STATUS_ALLOC_FAILED = -2,
+        GGML_STATUS_FAILED = -1,
+        GGML_STATUS_SUCCESS = 0,
+        GGML_STATUS_ABORTED = 1,
+    };
+
+    // get ggml_status name string
+    GGML_API const char * ggml_status_to_string(enum ggml_status status);
+
+    // ieee 754-2008 half-precision float16
+    // todo: make this not an integral type
+    typedef uint16_t ggml_fp16_t;
+    GGML_API float       ggml_fp16_to_fp32(ggml_fp16_t);
+    GGML_API ggml_fp16_t ggml_fp32_to_fp16(float);
+    GGML_API void        ggml_fp16_to_fp32_row(const ggml_fp16_t *, float *, int64_t);
+    GGML_API void        ggml_fp32_to_fp16_row(const float *, ggml_fp16_t *, int64_t);
+
+    // google brain half-precision bfloat16
+    typedef struct { uint16_t bits; } ggml_bf16_t;
+    GGML_API ggml_bf16_t ggml_fp32_to_bf16(float);
+    GGML_API float       ggml_bf16_to_fp32(ggml_bf16_t);  // consider just doing << 16
+    GGML_API void        ggml_bf16_to_fp32_row(const ggml_bf16_t *, float *, int64_t);
+    GGML_API void        ggml_fp32_to_bf16_row_ref(const float *, ggml_bf16_t *, int64_t);
+    GGML_API void        ggml_fp32_to_bf16_row(const float *, ggml_bf16_t *, int64_t);
+
+    struct ggml_object;
+    struct ggml_context;
+    struct ggml_cgraph;
+
+    // NOTE: always add types at the end of the enum to keep backward compatibility
+    enum ggml_type {
+        GGML_TYPE_F32     = 0,
+        GGML_TYPE_F16     = 1,
+        GGML_TYPE_Q4_0    = 2,
+        GGML_TYPE_Q4_1    = 3,
+        // GGML_TYPE_Q4_2 = 4, support has been removed
+        // GGML_TYPE_Q4_3 = 5, support has been removed
+        GGML_TYPE_Q5_0    = 6,
+        GGML_TYPE_Q5_1    = 7,
+        GGML_TYPE_Q8_0    = 8,
+        GGML_TYPE_Q8_1    = 9,
+        GGML_TYPE_Q2_K    = 10,
+        GGML_TYPE_Q3_K    = 11,
+        GGML_TYPE_Q4_K    = 12,
+        GGML_TYPE_Q5_K    = 13,
+        GGML_TYPE_Q6_K    = 14,
+        GGML_TYPE_Q8_K    = 15,
+        GGML_TYPE_IQ2_XXS = 16,
+        GGML_TYPE_IQ2_XS  = 17,
+        GGML_TYPE_IQ3_XXS = 18,
+        GGML_TYPE_IQ1_S   = 19,
+        GGML_TYPE_IQ4_NL  = 20,
+        GGML_TYPE_IQ3_S   = 21,
+        GGML_TYPE_IQ2_S   = 22,
+        GGML_TYPE_IQ4_XS  = 23,
+        GGML_TYPE_I8      = 24,
+        GGML_TYPE_I16     = 25,
+        GGML_TYPE_I32     = 26,
+        GGML_TYPE_I64     = 27,
+        GGML_TYPE_F64     = 28,
+        GGML_TYPE_IQ1_M   = 29,
+        GGML_TYPE_BF16    = 30,
+        // GGML_TYPE_Q4_0_4_4 = 31, support has been removed from gguf files
+        // GGML_TYPE_Q4_0_4_8 = 32,
+        // GGML_TYPE_Q4_0_8_8 = 33,
+        GGML_TYPE_TQ1_0   = 34,
+        GGML_TYPE_TQ2_0   = 35,
+        // GGML_TYPE_IQ4_NL_4_4 = 36,
+        // GGML_TYPE_IQ4_NL_4_8 = 37,
+        // GGML_TYPE_IQ4_NL_8_8 = 38,
+        GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
+        GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
+        GGML_TYPE_TURBO3_0 = 41, // TurboQuant 3-bit KV cache: 2-bit PolarQuant + 1-bit QJL
+        GGML_TYPE_TURBO4_0 = 42, // TurboQuant 4-bit KV cache: 3-bit PolarQuant + 1-bit QJL
+        GGML_TYPE_TURBO2_0 = 43, // TurboQuant 2-bit KV cache: 2-bit PolarQuant (no QJL)
+        GGML_TYPE_TQ3_1S  = 44, // TurboQuant 3-bit weight: WHT-rotated 8-level Lloyd-Max, block_size=32
+        GGML_TYPE_TQ4_1S  = 45, // TurboQuant 4-bit weight: WHT-rotated 16-level Lloyd-Max, block_size=32
+        GGML_TYPE_COUNT   = 46,
+    };
+
+    // precision
+    enum ggml_prec {
+        GGML_PREC_DEFAULT =  0, // stored as ggml_tensor.op_params, 0 by default
+        GGML_PREC_F32     = 10,
+    };
+
+    // model file types
+    enum ggml_ftype {
+        GGML_FTYPE_UNKNOWN        = -1,
+        GGML_FTYPE_ALL_F32        = 0,
+        GGML_FTYPE_MOSTLY_F16     = 1,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q4_0    = 2,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q4_1    = 3,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q4_1_SOME_F16 = 4, // tok_embeddings.weight and output.weight are F16
+        GGML_FTYPE_MOSTLY_Q8_0    = 7,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q5_0    = 8,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q5_1    = 9,  // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q2_K    = 10, // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q3_K    = 11, // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q4_K    = 12, // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q5_K    = 13, // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q6_K    = 14, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ2_XXS = 15, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ2_XS  = 16, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ3_XXS = 17, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ1_S   = 18, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ4_NL  = 19, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ3_S   = 20, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ2_S   = 21, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ4_XS  = 22, // except 1d tensors
+        GGML_FTYPE_MOSTLY_IQ1_M   = 23, // except 1d tensors
+        GGML_FTYPE_MOSTLY_BF16    = 24, // except 1d tensors
+        GGML_FTYPE_MOSTLY_MXFP4   = 25, // except 1d tensors
+        GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
+    };
+
+    // available tensor operations:
+    enum ggml_op {
+        GGML_OP_NONE = 0,
+
+        GGML_OP_DUP,
+        GGML_OP_ADD,
+        GGML_OP_ADD_ID,
+        GGML_OP_ADD1,
+        GGML_OP_ACC,
+        GGML_OP_SUB,
+        GGML_OP_MUL,
+        GGML_OP_DIV,
+        GGML_OP_SQR,
+        GGML_OP_SQRT,
+        GGML_OP_LOG,
+        GGML_OP_SIN,
+        GGML_OP_COS,
+        GGML_OP_SUM,
+        GGML_OP_SUM_ROWS,
+        GGML_OP_CUMSUM,
+        GGML_OP_MEAN,
+        GGML_OP_ARGMAX,
+        GGML_OP_COUNT_EQUAL,
+        GGML_OP_REPEAT,
+        GGML_OP_REPEAT_BACK,
+        GGML_OP_CONCAT,
+        GGML_OP_SILU_BACK,
+        GGML_OP_NORM, // normalize
+        GGML_OP_RMS_NORM,
+        GGML_OP_RMS_NORM_BACK,
+        GGML_OP_GROUP_NORM,
+        GGML_OP_L2_NORM,
+
+        GGML_OP_MUL_MAT,
+        GGML_OP_MUL_MAT_ID,
+        GGML_OP_OUT_PROD,
+
+        GGML_OP_SCALE,
+        GGML_OP_SET,
+        GGML_OP_CPY,
+        GGML_OP_CONT,
+        GGML_OP_RESHAPE,
+        GGML_OP_VIEW,
+        GGML_OP_PERMUTE,
+        GGML_OP_TRANSPOSE,
+        GGML_OP_GET_ROWS,
+        GGML_OP_GET_ROWS_BACK,
+        GGML_OP_SET_ROWS,
+        GGML_OP_DIAG,
+        GGML_OP_DIAG_MASK_INF,
+        GGML_OP_DIAG_MASK_ZERO,
+        GGML_OP_SOFT_MAX,
+        GGML_OP_SOFT_MAX_BACK,
+        GGML_OP_ROPE,
+        GGML_OP_ROPE_BACK,
+        GGML_OP_CLAMP,
+        GGML_OP_CONV_TRANSPOSE_1D,
+        GGML_OP_IM2COL,
+        GGML_OP_IM2COL_BACK,
+        GGML_OP_IM2COL_3D,
+        GGML_OP_CONV_2D,
+        GGML_OP_CONV_3D,
+        GGML_OP_CONV_2D_DW,
+        GGML_OP_CONV_TRANSPOSE_2D,
+        GGML_OP_POOL_1D,
+        GGML_OP_POOL_2D,
+        GGML_OP_POOL_2D_BACK,
+        GGML_OP_UPSCALE,
+        GGML_OP_PAD,
+        GGML_OP_PAD_REFLECT_1D,
+        GGML_OP_ROLL,
+        GGML_OP_ARANGE,
+        GGML_OP_TIMESTEP_EMBEDDING,
+        GGML_OP_ARGSORT,
+        GGML_OP_TOP_K,
+        GGML_OP_LEAKY_RELU,
+        GGML_OP_TRI,
+        GGML_OP_FILL,
+
+        GGML_OP_FLASH_ATTN_EXT,
+        GGML_OP_FLASH_ATTN_BACK,
+        GGML_OP_SSM_CONV,
+        GGML_OP_SSM_SCAN,
+        GGML_OP_WIN_PART,
+        GGML_OP_WIN_UNPART,
+        GGML_OP_GET_REL_POS,
+        GGML_OP_ADD_REL_POS,
+        GGML_OP_RWKV_WKV6,
+        GGML_OP_GATED_LINEAR_ATTN,
+        GGML_OP_RWKV_WKV7,
+        GGML_OP_SOLVE_TRI,
+        GGML_OP_GATED_DELTA_NET,
+        GGML_OP_TURBO_WHT,
+
+        GGML_OP_UNARY,
+
+        GGML_OP_MAP_CUSTOM1,
+        GGML_OP_MAP_CUSTOM2,
+        GGML_OP_MAP_CUSTOM3,
+
+        GGML_OP_CUSTOM,
+
+        GGML_OP_CROSS_ENTROPY_LOSS,
+        GGML_OP_CROSS_ENTROPY_LOSS_BACK,
+        GGML_OP_OPT_STEP_ADAMW,
+        GGML_OP_OPT_STEP_SGD,
+
+        GGML_OP_GLU,
+
+        GGML_OP_PFLASH_BSA_ATTN,
+
+        GGML_OP_COUNT,
+    };
+
+    enum ggml_unary_op {
+        GGML_UNARY_OP_ABS,
+        GGML_UNARY_OP_SGN,
+        GGML_UNARY_OP_NEG,
+        GGML_UNARY_OP_STEP,
+        GGML_UNARY_OP_TANH,
+        GGML_UNARY_OP_ELU,
+        GGML_UNARY_OP_RELU,
+        GGML_UNARY_OP_SIGMOID,
+        GGML_UNARY_OP_GELU,
+        GGML_UNARY_OP_GELU_QUICK,
+        GGML_UNARY_OP_SILU,
+        GGML_UNARY_OP_HARDSWISH,
+        GGML_UNARY_OP_HARDSIGMOID,
+        GGML_UNARY_OP_EXP,
+        GGML_UNARY_OP_EXPM1,
+        GGML_UNARY_OP_SOFTPLUS,
+        GGML_UNARY_OP_GELU_ERF,
+        GGML_UNARY_OP_XIELU,
+        GGML_UNARY_OP_FLOOR,
+        GGML_UNARY_OP_CEIL,
+        GGML_UNARY_OP_ROUND,
+        GGML_UNARY_OP_TRUNC,
+
+        GGML_UNARY_OP_COUNT,
+    };
+
+    enum ggml_glu_op {
+        GGML_GLU_OP_REGLU,
+        GGML_GLU_OP_GEGLU,
+        GGML_GLU_OP_SWIGLU,
+        GGML_GLU_OP_SWIGLU_OAI,
+        GGML_GLU_OP_GEGLU_ERF,
+        GGML_GLU_OP_GEGLU_QUICK,
+
+        GGML_GLU_OP_COUNT,
+    };
+
+    enum ggml_object_type {
+        GGML_OBJECT_TYPE_TENSOR,
+        GGML_OBJECT_TYPE_GRAPH,
+        GGML_OBJECT_TYPE_WORK_BUFFER
+    };
+
+    enum ggml_log_level {
+        GGML_LOG_LEVEL_NONE  = 0,
+        GGML_LOG_LEVEL_DEBUG = 1,
+        GGML_LOG_LEVEL_INFO  = 2,
+        GGML_LOG_LEVEL_WARN  = 3,
+        GGML_LOG_LEVEL_ERROR = 4,
+        GGML_LOG_LEVEL_CONT  = 5, // continue previous log
+    };
+
+    // this tensor...
+    enum ggml_tensor_flag {
+        GGML_TENSOR_FLAG_INPUT   =  1, // ...is an input for the GGML compute graph
+        GGML_TENSOR_FLAG_OUTPUT  =  2, // ...is an output for the GGML compute graph
+        GGML_TENSOR_FLAG_PARAM   =  4, // ...contains trainable parameters
+        GGML_TENSOR_FLAG_LOSS    =  8, // ...defines loss for numerical optimization (multiple loss tensors add up)
+        GGML_TENSOR_FLAG_COMPUTE = 16, // ...must be computed
+    };
+
+    enum ggml_tri_type {
+        GGML_TRI_TYPE_UPPER_DIAG = 0,
+        GGML_TRI_TYPE_UPPER      = 1,
+        GGML_TRI_TYPE_LOWER_DIAG = 2,
+        GGML_TRI_TYPE_LOWER      = 3
+    };
+
+    struct ggml_init_params {
+        // memory pool
+        size_t mem_size;   // bytes
+        void * mem_buffer; // if NULL, memory will be allocated internally
+        bool   no_alloc;   // don't allocate memory for the tensor data
+    };
+
+    // n-dimensional tensor
+    struct ggml_tensor {
+        enum ggml_type type;
+
+        struct ggml_backend_buffer * buffer;
+
+        int64_t ne[GGML_MAX_DIMS]; // number of elements
+        size_t  nb[GGML_MAX_DIMS]; // stride in bytes:
+                                   // nb[0] = ggml_type_size(type)
+                                   // nb[1] = nb[0]   * (ne[0] / ggml_blck_size(type)) + padding
+                                   // nb[i] = nb[i-1] * ne[i-1]
+
+        // compute data
+        enum ggml_op op;
+
+        // op params - allocated as int32_t for alignment
+        int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+
+        int32_t flags;
+
+        struct ggml_tensor * src[GGML_MAX_SRC];
+
+        // source tensor and offset for views
+        struct ggml_tensor * view_src;
+        size_t               view_offs;
+
+        void * data;
+
+        char name[GGML_MAX_NAME];
+
+        void * extra; // extra things e.g. for ggml-cuda.cu
+
+        char padding[8];
+    };
+
+    static const size_t GGML_TENSOR_SIZE = sizeof(struct ggml_tensor);
+
+    // Abort callback
+    // If not NULL, called before ggml computation
+    // If it returns true, the computation is aborted
+    typedef bool (*ggml_abort_callback)(void * data);
+
+
+    //
+    // GUID
+    //
+
+    // GUID types
+    typedef uint8_t ggml_guid[16];
+    typedef ggml_guid * ggml_guid_t;
+
+    GGML_API bool ggml_guid_matches(ggml_guid_t guid_a, ggml_guid_t guid_b);
+
+    // misc
+
+    GGML_API const char * ggml_version(void);
+    GGML_API const char * ggml_commit(void);
+
+    GGML_API void    ggml_time_init(void); // call this once at the beginning of the program
+    GGML_API int64_t ggml_time_ms(void);
+    GGML_API int64_t ggml_time_us(void);
+    GGML_API int64_t ggml_cycles(void);
+    GGML_API int64_t ggml_cycles_per_ms(void);
+
+    // accepts a UTF-8 path, even on Windows
+
+
+
+// ===== FILE: ggml/src/ggml-cuda/fattn-tile.cu =====
+
+#include "common.cuh"
+#include "fattn-tile.cuh"
+#include "fattn-wmma-f16.cuh"
+
+void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * K = dst->src[1];
+    const ggml_tensor * V = dst->src[2];
+    switch (K->ne[0]) {
+        case  40: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 40,  40>(ctx, dst);
+        } break;
+        case  64: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 64,  64>(ctx, dst);
+        } break;
+        case  72: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 72,  72>(ctx, dst);
+        } break;
+        case  80: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 80,  80>(ctx, dst);
+        } break;
+        case  96: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 96,  96>(ctx, dst);
+        } break;
+        case 112: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<112, 112>(ctx, dst);
+        } break;
+        case 128: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<128, 128>(ctx, dst);
+        } break;
+        case 256: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<256, 256>(ctx, dst);
+        } break;
+        case 512: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<512, 512>(ctx, dst);
+        } break;
+#ifndef GGML_USE_HIP
+        // D>=576 tile kernels exceed HIP local memory limit (67584 > 65536)
+        case 576: {
+            GGML_ASSERT(V->ne[0] == 512);
+            ggml_cuda_flash_attn_ext_tile_case<576, 512>(ctx, dst);
+        } break;
+        case 640: {
+            GGML_ASSERT(V->ne[0] == 512);
+            ggml_cuda_flash_attn_ext_tile_case<640, 512>(ctx, dst);
+        } break;
+#endif
+        default: {
+            GGML_ABORT("Unsupported head size");
+        } break;
+    }
+}
+
+
+// ===== FILE: src/llama-model.cpp =====
+
+                        layer.bo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0);
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd, n_ff}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias", i),   {n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_CODESHELL:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+
+                    // if tok embd is NULL, init from output
+                    if (tok_embd == NULL) {
+                        tok_embd = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    // output
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+                    output        = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0);
+                        layer.bqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "bias", i),   {n_embd + 2*n_embd_gqa}, 0);
+
+                        layer.wo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+                        layer.bo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0);
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i),   {n_embd, n_ff}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP, "bias", i),     {n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_ORION:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+                    output        = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_INTERNLM2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        // layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0);
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,  "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,  "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA3:
+            case LLM_ARCH_GEMMA_EMBEDDING:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,   "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    // Dense linear weights
+                    dense_2_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_2_OUT, "weight"), {n_embd, hparams.dense_2_feat_out}, TENSOR_NOT_REQUIRED);
+                    dense_3_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_3_OUT, "weight"), {hparams.dense_3_feat_in, n_embd}, TENSOR_NOT_REQUIRED);
+
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA3N:
+                {
+                    const int64_t n_altup      = hparams.n_altup;
+                    const int64_t laurel_rank  = hparams.laurel_rank;
+                    const int64_t n_embd_altup = hparams.n_embd_altup;
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    tok_embd           = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,           "weight"), {n_embd, n_vocab}, 0);
+                    tok_embd_per_layer = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_altup * n_layer, n_vocab}, 0);
+
+                    altup_proj           = create_tensor(tn(LLM_TENSOR_ALTUP_PROJ,           "weight"), {n_embd, n_embd, n_altup - 1}, 0);
+                    altup_unembd_proj    = create_tensor(tn(LLM_TENSOR_ALTUP_UNEMBD_PROJ,    "weight"), {n_embd, n_embd, n_altup - 1}, 0);
+                    per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_altup * n_layer}, 0);
+                    per_layer_proj_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM,  "weight"), {n_embd_altup}, 0);
+
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        // altup & laurel
+                        layer.per_layer_inp_gate   = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE,  "weight", i), {n_embd, n_embd_altup}, 0);
+                        layer.per_layer_proj       = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ,      "weight", i), {n_embd_altup, n_embd}, 0);
+                        layer.per_layer_post_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0);
+                        layer.altup_correct_coef   = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_COEF,  "weight", i), {n_altup, n_altup}, 0);
+                        layer.altup_correct_scale  = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_SCALE, "weight", i), {n_embd}, 0);
+                        layer.altup_predict_coef   = create_tensor(tn(LLM_TENSOR_ALTUP_PREDICT_COEF,  "weight", i), {n_altup, n_altup * n_altup}, 0);
+                        layer.altup_router         = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER,        "weight", i), {n_embd, n_altup}, 0);
+                        layer.altup_router_norm    = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER_NORM,   "weight", i), {n_embd}, 0);
+                        layer.laurel_l             = create_tensor(tn(LLM_TENSOR_LAUREL_L,            "weight", i), {n_embd, laurel_rank}, 0);
+                        layer.laurel_r             = create_tensor(tn(LLM_TENSOR_LAUREL_R,            "weight", i), {laurel_rank, n_embd}, 0);
+                        layer.laurel_post_norm     = create_tensor(tn(LLM_TENSOR_LAUREL_POST_NORM,    "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA4:
+                {
+                    const uint32_t n_embd_per_layer = hparams.n_embd_per_layer;
+                    const int64_t  n_ff_exp         = hparams.n_ff_exp;
+
+                    if (n_embd_head_k != n_embd_head_v) {
+                        throw std::runtime_error("Gemma 4 requires n_embd_head_k == n_embd_head_v");
+                    }
+                    if (hparams.n_embd_head_k_swa != hparams.n_embd_head_v_swa) {
+                        throw std::runtime_error("Gemma 4 requires n_embd_head_k_swa == n_embd_head_v_swa");
+                    }
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    if (n_embd_per_layer > 0) {
+                        tok_embd_per_layer   = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_per_layer * n_layer, n_vocab}, 0);
+                        per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_per_layer * n_layer}, 0);
+                        per_layer_proj_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM,  "weight"), {n_embd_per_layer}, 0);
+                    }
+
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    int rope_freqs_flag = 0;
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+                        const int64_t n_head      = hparams.n_head(i);
+                        const int64_t n_embd_head = hparams.n_embd_head_k(i);
+                        const int64_t n_embd_k    = hparams.n_embd_k_gqa(i);
+                        const int64_t n_embd_v    = hparams.n_embd_v_gqa(i);
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        // note: use_alternative_attention (v_proj is optional, if it's not present, use k_proj)
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v}, TENSOR_NOT_REQUIRED);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head * n_head, n_embd}, 0);
+
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1u}, TENSOR_NOT_REQUIRED);
+
+                        if (!hparams.is_swa(i)) {
+                            // full_attention layers use rope_freqs for proportional rope
+                            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_embd_head/2}, rope_freqs_flag);
+                            rope_freqs_flag = TENSOR_DUPLICATED;
+                        }
+
+                        // handle use_double_wide_mlp
+                        int64_t n_ff_cur = hparams.n_ff(i);
+
+                        // for expert layers, we use normal FFN as shared expert (same as python code)
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff_cur}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff_cur}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff_cur, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        // MoE router
+                        layer.ffn_gate_inp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert}, TENSOR_NOT_REQUIRED);
+                        bool has_expert = layer.ffn_gate_inp != nullptr;
+
+                        // norm
+                        if (has_expert) {
+                            layer.ffn_gate_inp_s = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "scale", i), {n_embd}, 0);
+
+                            layer.ffn_pre_norm_2  = create_tensor(tn(LLM_TENSOR_FFN_PRE_NORM_2,  "weight", i), {n_embd}, 0);
+                            layer.ffn_post_norm_1 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_1, "weight", i), {n_embd}, 0);
+                            layer.ffn_post_norm_2 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_2, "weight", i), {n_embd}, 0);
+
+                            // MoE FFN
+                            layer.ffn_gate_up_exps  = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS,  "weight", i), {n_embd, n_ff_exp * 2, n_expert}, 0);
+                            layer.ffn_down_exps     = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS,     "weight", i), {n_ff_exp, n_embd, n_expert}, 0);
+
+                            // per-expert scale will be loaded as down_exps_s at the end of the current switch case
+                        }
+
+                        // per-layer embeddings
+                        if (n_embd_per_layer > 0) {
+                            layer.per_layer_inp_gate   = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE,  "weight", i), {n_embd, n_embd_per_layer}, 0);
+                            layer.per_layer_proj       = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ,      "weight", i), {n_embd_per_layer, n_embd}, 0);
+                            layer.per_layer_post_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0);
+                        }
+                    }
+                } break;
+            case LLM_ARCH_STARCODER2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+
+                        // optional bias tensors
+                        layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd}, 0);
+                        layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, 0);
+                        layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, 0);
+                        layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+
+                        // optional bias tensors
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP ,  "bias", i), {  n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_MAMBA:
+                {
+                    const int64_t d_conv  = hparams.ssm_d_conv;
+                    const int64_t d_inner = hparams.ssm_d_inner;
+                    const int64_t d_state = hparams.ssm_d_state;
+                    const int64_t dt_rank = hparams.ssm_dt_rank;
+
+                    // only an expansion factor of 2 is supported for now
+                    if (2 * n_embd != d_inner) {
+                        throw std::runtime_error("only an expansion factor of 2 is supported for now");
+                    }
+
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed, duplicated to allow offloading
+// ===== FILE: common/arg.cpp ===== common_params_print_completion(ctx_arg); exit(0); } params.lr.init(); } catch (const std::invalid_argument & ex) { fprintf(stderr, "%s\n", ex.what()); ctx_arg.params = params_org; return false; } catch (std::exception & ex) { fprintf(stderr, "%s\n", ex.what()); exit(1); // for other exceptions, we exit with status code 1 } return true; } static std::string list_builtin_chat_templates() { std::vector<const char *> supported_tmpl; int32_t res = llama_chat_builtin_templates(nullptr, 0); supported_tmpl.resize(res); res = llama_chat_builtin_templates(supported_tmpl.data(), supported_tmpl.size()); std::ostringstream msg; for (auto & tmpl : supported_tmpl) { msg << tmpl << (&tmpl == &supported_tmpl.back() ? "" : ", "); } return msg.str(); } bool common_arg_utils::is_truthy(const std::string & value) { return value == "on" || value == "enabled" || value == "true" || value == "1"; } bool common_arg_utils::is_falsey(const std::string & value) { return value == "off" || value == "disabled" || value == "false" || value == "0"; } bool common_arg_utils::is_autoy(const std::string & value) { return value == "auto" || value == "-1"; } // Simple CSV parser that handles quoted fields and escaped quotes // example: // input: value1,"value, with, commas","value with ""escaped"" quotes",value4 // output: [value1] [value, with, commas] [value with "escaped" quotes] [value4] static std::vector<std::string> parse_csv_row(const std::string& input) { std::vector<std::string> fields; std::string field; bool in_quotes = false; for (size_t i = 0; i < input.length(); ++i) { char ch = input[i]; if (ch == '"') { if (!in_quotes) { // start of quoted field (only valid if at beginning of field) if (!field.empty()) { // quote appeared in middle of unquoted field, treat as literal field += '"'; } else { in_quotes = true; // start } } else { if (i + 1 < input.length() && input[i + 1] == '"') { // escaped quote: "" field += '"'; ++i; // skip the next quote } else { in_quotes = false; // end } } } else if (ch == ',') { if (in_quotes) { field += ','; } else { fields.push_back(std::move(field)); field.clear(); } } else { field += ch; } } // Add the last field fields.push_back(std::move(field)); return fields; } common_params_context common_params_parser_init(common_params & params, llama_example ex, void(*print_usage)(int, char **)) { // per-example default params // we define here to make sure it's included in llama-gen-docs if (ex == LLAMA_EXAMPLE_COMPLETION) { params.use_jinja = false; // disable jinja by default } else if (ex == LLAMA_EXAMPLE_MTMD) { params.use_jinja = false; // disable jinja by default params.sampling.temp = 0.2; // lower temp by default for better quality } else if (ex == LLAMA_EXAMPLE_SERVER) { params.n_parallel = -1; // auto by default } params.use_color = tty_can_use_colors(); // load dynamic backends ggml_backend_load_all(); common_params_context ctx_arg(params); ctx_arg.print_usage = print_usage; ctx_arg.ex = ex; std::string sampler_type_chars; std::string sampler_type_names; for (const auto & sampler : params.sampling.samplers) { sampler_type_chars += common_sampler_type_to_chr(sampler); sampler_type_names += common_sampler_type_to_str(sampler) +
+// [truncated]

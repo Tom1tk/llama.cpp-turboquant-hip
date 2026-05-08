@@ -1,0 +1,858 @@
+
+
+// ===== FILE: ggml/src/ggml-cuda/fattn-tile.cu =====
+
+#include "common.cuh"
+#include "fattn-tile.cuh"
+#include "fattn-wmma-f16.cuh"
+
+void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * K = dst->src[1];
+    const ggml_tensor * V = dst->src[2];
+    switch (K->ne[0]) {
+        case  40: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 40,  40>(ctx, dst);
+        } break;
+        case  64: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 64,  64>(ctx, dst);
+        } break;
+        case  72: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 72,  72>(ctx, dst);
+        } break;
+        case  80: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 80,  80>(ctx, dst);
+        } break;
+        case  96: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case< 96,  96>(ctx, dst);
+        } break;
+        case 112: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<112, 112>(ctx, dst);
+        } break;
+        case 128: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<128, 128>(ctx, dst);
+        } break;
+        case 256: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<256, 256>(ctx, dst);
+        } break;
+        case 512: {
+            GGML_ASSERT(V->ne[0] == K->ne[0]);
+            ggml_cuda_flash_attn_ext_tile_case<512, 512>(ctx, dst);
+        } break;
+#ifndef GGML_USE_HIP
+        // D>=576 tile kernels exceed HIP local memory limit (67584 > 65536)
+        case 576: {
+            GGML_ASSERT(V->ne[0] == 512);
+            ggml_cuda_flash_attn_ext_tile_case<576, 512>(ctx, dst);
+        } break;
+        case 640: {
+            GGML_ASSERT(V->ne[0] == 512);
+            ggml_cuda_flash_attn_ext_tile_case<640, 512>(ctx, dst);
+        } break;
+#endif
+        default: {
+            GGML_ABORT("Unsupported head size");
+        } break;
+    }
+}
+
+
+// ===== FILE: src/llama-model.cpp =====
+
+                        layer.bo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0);
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd, n_ff}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias", i),   {n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_CODESHELL:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+
+                    // if tok embd is NULL, init from output
+                    if (tok_embd == NULL) {
+                        tok_embd = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    // output
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+                    output        = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0);
+                        layer.bqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "bias", i),   {n_embd + 2*n_embd_gqa}, 0);
+
+                        layer.wo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+                        layer.bo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0);
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i),   {n_embd, n_ff}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP, "bias", i),     {n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_ORION:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+                    output        = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_INTERNLM2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        // layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa}, 0);
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,  "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,  "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED); // same as tok_embd, duplicated to allow offloading
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA3:
+            case LLM_ARCH_GEMMA_EMBEDDING:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,   "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    // Dense linear weights
+                    dense_2_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_2_OUT, "weight"), {n_embd, hparams.dense_2_feat_out}, TENSOR_NOT_REQUIRED);
+                    dense_3_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_3_OUT, "weight"), {hparams.dense_3_feat_in, n_embd}, TENSOR_NOT_REQUIRED);
+
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA3N:
+                {
+                    const int64_t n_altup      = hparams.n_altup;
+                    const int64_t laurel_rank  = hparams.laurel_rank;
+                    const int64_t n_embd_altup = hparams.n_embd_altup;
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    tok_embd           = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,           "weight"), {n_embd, n_vocab}, 0);
+                    tok_embd_per_layer = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_altup * n_layer, n_vocab}, 0);
+
+                    altup_proj           = create_tensor(tn(LLM_TENSOR_ALTUP_PROJ,           "weight"), {n_embd, n_embd, n_altup - 1}, 0);
+                    altup_unembd_proj    = create_tensor(tn(LLM_TENSOR_ALTUP_UNEMBD_PROJ,    "weight"), {n_embd, n_embd, n_altup - 1}, 0);
+                    per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_altup * n_layer}, 0);
+                    per_layer_proj_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM,  "weight"), {n_embd_altup}, 0);
+
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        // altup & laurel
+                        layer.per_layer_inp_gate   = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE,  "weight", i), {n_embd, n_embd_altup}, 0);
+                        layer.per_layer_proj       = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ,      "weight", i), {n_embd_altup, n_embd}, 0);
+                        layer.per_layer_post_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0);
+                        layer.altup_correct_coef   = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_COEF,  "weight", i), {n_altup, n_altup}, 0);
+                        layer.altup_correct_scale  = create_tensor(tn(LLM_TENSOR_ALTUP_CORRECT_SCALE, "weight", i), {n_embd}, 0);
+                        layer.altup_predict_coef   = create_tensor(tn(LLM_TENSOR_ALTUP_PREDICT_COEF,  "weight", i), {n_altup, n_altup * n_altup}, 0);
+                        layer.altup_router         = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER,        "weight", i), {n_embd, n_altup}, 0);
+                        layer.altup_router_norm    = create_tensor(tn(LLM_TENSOR_ALTUP_ROUTER_NORM,   "weight", i), {n_embd}, 0);
+                        layer.laurel_l             = create_tensor(tn(LLM_TENSOR_LAUREL_L,            "weight", i), {n_embd, laurel_rank}, 0);
+                        layer.laurel_r             = create_tensor(tn(LLM_TENSOR_LAUREL_R,            "weight", i), {laurel_rank, n_embd}, 0);
+                        layer.laurel_post_norm     = create_tensor(tn(LLM_TENSOR_LAUREL_POST_NORM,    "weight", i), {n_embd}, 0);
+                    }
+                } break;
+            case LLM_ARCH_GEMMA4:
+                {
+                    const uint32_t n_embd_per_layer = hparams.n_embd_per_layer;
+                    const int64_t  n_ff_exp         = hparams.n_ff_exp;
+
+                    if (n_embd_head_k != n_embd_head_v) {
+                        throw std::runtime_error("Gemma 4 requires n_embd_head_k == n_embd_head_v");
+                    }
+                    if (hparams.n_embd_head_k_swa != hparams.n_embd_head_v_swa) {
+                        throw std::runtime_error("Gemma 4 requires n_embd_head_k_swa == n_embd_head_v_swa");
+                    }
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    if (n_embd_per_layer > 0) {
+                        tok_embd_per_layer   = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"), {n_embd_per_layer * n_layer, n_vocab}, 0);
+                        per_layer_model_proj = create_tensor(tn(LLM_TENSOR_PER_LAYER_MODEL_PROJ, "weight"), {n_embd, n_embd_per_layer * n_layer}, 0);
+                        per_layer_proj_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ_NORM,  "weight"), {n_embd_per_layer}, 0);
+                    }
+
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    int rope_freqs_flag = 0;
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+                        const int64_t n_head      = hparams.n_head(i);
+                        const int64_t n_embd_head = hparams.n_embd_head_k(i);
+                        const int64_t n_embd_k    = hparams.n_embd_k_gqa(i);
+                        const int64_t n_embd_v    = hparams.n_embd_v_gqa(i);
+
+                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+
+                        // note: use_alternative_attention (v_proj is optional, if it's not present, use k_proj)
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head * n_head}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v}, TENSOR_NOT_REQUIRED);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head * n_head, n_embd}, 0);
+
+                        layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head}, 0);
+                        layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1u}, TENSOR_NOT_REQUIRED);
+
+                        if (!hparams.is_swa(i)) {
+                            // full_attention layers use rope_freqs for proportional rope
+                            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_embd_head/2}, rope_freqs_flag);
+                            rope_freqs_flag = TENSOR_DUPLICATED;
+                        }
+
+                        // handle use_double_wide_mlp
+                        int64_t n_ff_cur = hparams.n_ff(i);
+
+                        // for expert layers, we use normal FFN as shared expert (same as python code)
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff_cur}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff_cur}, 0);
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff_cur, n_embd}, 0);
+                        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
+
+                        // MoE router
+                        layer.ffn_gate_inp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert}, TENSOR_NOT_REQUIRED);
+                        bool has_expert = layer.ffn_gate_inp != nullptr;
+
+                        // norm
+                        if (has_expert) {
+                            layer.ffn_gate_inp_s = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "scale", i), {n_embd}, 0);
+
+                            layer.ffn_pre_norm_2  = create_tensor(tn(LLM_TENSOR_FFN_PRE_NORM_2,  "weight", i), {n_embd}, 0);
+                            layer.ffn_post_norm_1 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_1, "weight", i), {n_embd}, 0);
+                            layer.ffn_post_norm_2 = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM_2, "weight", i), {n_embd}, 0);
+
+                            // MoE FFN
+                            layer.ffn_gate_up_exps  = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS,  "weight", i), {n_embd, n_ff_exp * 2, n_expert}, 0);
+                            layer.ffn_down_exps     = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS,     "weight", i), {n_ff_exp, n_embd, n_expert}, 0);
+
+                            // per-expert scale will be loaded as down_exps_s at the end of the current switch case
+                        }
+
+                        // per-layer embeddings
+                        if (n_embd_per_layer > 0) {
+                            layer.per_layer_inp_gate   = create_tensor(tn(LLM_TENSOR_PER_LAYER_INP_GATE,  "weight", i), {n_embd, n_embd_per_layer}, 0);
+                            layer.per_layer_proj       = create_tensor(tn(LLM_TENSOR_PER_LAYER_PROJ,      "weight", i), {n_embd_per_layer, n_embd}, 0);
+                            layer.per_layer_post_norm  = create_tensor(tn(LLM_TENSOR_PER_LAYER_POST_NORM, "weight", i), {n_embd}, 0);
+                        }
+                    }
+                } break;
+            case LLM_ARCH_STARCODER2:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, 0);
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    }
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd}, 0);
+                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa}, 0);
+                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
+
+                        // optional bias tensors
+                        layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd}, 0);
+                        layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, 0);
+                        layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, 0);
+                        layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0);
+
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd}, 0);
+
+                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+
+                        // optional bias tensors
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP ,  "bias", i), {  n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_MAMBA:
+                {
+                    const int64_t d_conv  = hparams.ssm_d_conv;
+                    const int64_t d_inner = hparams.ssm_d_inner;
+                    const int64_t d_state = hparams.ssm_d_state;
+                    const int64_t dt_rank = hparams.ssm_dt_rank;
+
+                    // only an expansion factor of 2 is supported for now
+                    if (2 * n_embd != d_inner) {
+                        throw std::runtime_error("only an expansion factor of 2 is supported for now");
+                    }
+
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+                    // output
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    // if output is NULL, init from the input tok embed, duplicated to allow offloading
+// ===== FILE: common/arg.cpp ===== common_params_print_completion(ctx_arg); exit(0); } params.lr.init(); } catch (const std::invalid_argument & ex) { fprintf(stderr, "%s\n", ex.what()); ctx_arg.params = params_org; return false; } catch (std::exception & ex) { fprintf(stderr, "%s\n", ex.what()); exit(1); // for other exceptions, we exit with status code 1 } return true; } static std::string list_builtin_chat_templates() { std::vector<const char *> supported_tmpl; int32_t res = llama_chat_builtin_templates(nullptr, 0); supported_tmpl.resize(res); res = llama_chat_builtin_templates(supported_tmpl.data(), supported_tmpl.size()); std::ostringstream msg; for (auto & tmpl : supported_tmpl) { msg << tmpl << (&tmpl == &supported_tmpl.back() ? "" : ", "); } return msg.str(); } bool common_arg_utils::is_truthy(const std::string & value) { return value == "on" || value == "enabled" || value == "true" || value == "1"; } bool common_arg_utils::is_falsey(const std::string & value) { return value == "off" || value == "disabled" || value == "false" || value == "0"; } bool common_arg_utils::is_autoy(const std::string & value) { return value == "auto" || value == "-1"; } // Simple CSV parser that handles quoted fields and escaped quotes // example: // input: value1,"value, with, commas","value with ""escaped"" quotes",value4 // output: [value1] [value, with, commas] [value with "escaped" quotes] [value4] static std::vector<std::string> parse_csv_row(const std::string& input) { std::vector<std::string> fields; std::string field; bool in_quotes = false; for (size_t i = 0; i < input.length(); ++i) { char ch = input[i]; if (ch == '"') { if (!in_quotes) { // start of quoted field (only valid if at beginning of field) if (!field.empty()) { // quote appeared in middle of unquoted field, treat as literal field += '"'; } else { in_quotes = true; // start } } else { if (i + 1 < input.length() && input[i + 1] == '"') { // escaped quote: "" field += '"'; ++i; // skip the next quote } else { in_quotes = false; // end } } } else if (ch == ',') { if (in_quotes) { field += ','; } else { fields.push_back(std::move(field)); field.clear(); } } else { field += ch; } } // Add the last field fields.push_back(std::move(field)); return fields; } common_params_context common_params_parser_init(common_params & params, llama_example ex, void(*print_usage)(int, char **)) { // per-example default params // we define here to make sure it's included in llama-gen-docs if (ex == LLAMA_EXAMPLE_COMPLETION) { params.use_jinja = false; // disable jinja by default } else if (ex == LLAMA_EXAMPLE_MTMD) { params.use_jinja = false; // disable jinja by default params.sampling.temp = 0.2; // lower temp by default for better quality } else if (ex == LLAMA_EXAMPLE_SERVER) { params.n_parallel = -1; // auto by default } params.use_color = tty_can_use_colors(); // load dynamic backends ggml_backend_load_all(); common_params_context ctx_arg(params); ctx_arg.print_usage = print_usage; ctx_arg.ex = ex; std::string sampler_type_chars; std::string sampler_type_names; for (const auto & sampler : params.sampling.samplers) { sampler_type_chars += common_sampler_type_to_chr(sampler); sampler_type_names += common_sampler_type_to_str(sampler) +
+// [truncated]
+
+
+
+// ===== FILE: tools/niah/pflash.cpp =====
+
+#include "pflash.h"
+#include "pflash-score.h"
+#include "llama.h"
+#include "log.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <numeric>
+
+struct llama_context * pflash_init_draft(
+    const std::string & model_path,
+    int32_t n_ctx,
+    const std::string & cache_type_k,
+    const std::string & cache_type_v,
+    int32_t n_gpu_layers,
+    bool use_bsa)
+{
+    auto mparams = llama_model_default_params();
+    mparams.n_gpu_layers = n_gpu_layers;
+
+    struct llama_model * model = llama_model_load_from_file(model_path.c_str(), mparams);
+    if (!model) {
+        LOG_ERR("pflash: failed to load draft model: %s", model_path.c_str());
+        return nullptr;
+    }
+
+    auto cparams = llama_context_default_params();
+    cparams.n_ctx = n_ctx;
+    cparams.n_batch = 2048;
+    cparams.n_ubatch = 512;
+    cparams.offload_kqv = (n_gpu_layers != 0);
+    cparams.use_pflash_bsa = use_bsa;
+
+    if (cache_type_k == "q8_0") {
+        cparams.type_k = GGML_TYPE_Q8_0;
+    } else if (cache_type_k == "f16") {
+        cparams.type_k = GGML_TYPE_F16;
+    } else {
+        cparams.type_k = GGML_TYPE_F32;
+    }
+    if (cache_type_v == "q8_0") {
+        cparams.type_v = GGML_TYPE_Q8_0;
+    } else if (cache_type_v == "f16") {
+        cparams.type_v = GGML_TYPE_F16;
+    } else {
+        cparams.type_v = GGML_TYPE_F32;
+    }
+
+    struct llama_context * ctx = llama_init_from_model(model, cparams);
+    if (!ctx) {
+        LOG_ERR("pflash: failed to create draft context");
+        llama_model_free(model);
+        return nullptr;
+    }
+
+    return ctx;
+}
+
+// Internal: run drafter forward on a single chunk of tokens and read K values.
+// Uses explicit absolute positions so RoPE encodes global sequence position,
+// making K vectors comparable across windows via cosine similarity.
+static bool pflash_process_window(
+    struct llama_context * draft_ctx,
+    const std::vector<llama_token> & tokens,
+    int32_t token_offset,
+    int32_t n_window,
+    int32_t score_layer,
+    int32_t kv_dim,
+    std::vector<float> & all_k,
+    bool use_bsa,
+    int32_t sink_tokens = 2048,
+    int32_t recent_tokens = 4096)
+{
+    llama_memory_clear(llama_get_memory(draft_ctx), true);
+    llama_synchronize(draft_ctx);
+
+    int32_t end = std::min(token_offset + n_window, (int32_t)tokens.size());
+    int32_t actual = end - token_offset;
+    int32_t n_batch = 2048;
+
+    // Compute and set BSA block mask before decode
+    if (use_bsa) {
+        const int BSA_BLOCK = 128;
+        const int n_sink_b  = std::max(1, sink_tokens   / BSA_BLOCK);
+        const int n_local_b = std::max(1, recent_tokens / BSA_BLOCK);
+
+        int n_blocks = (actual + BSA_BLOCK - 1) / BSA_BLOCK;
+        std::vector<int32_t> selected_blocks;
+        selected_blocks.reserve(n_sink_b + n_local_b);
+
+        // Sink blocks
+        int sink_end = std::min(n_sink_b, n_blocks);
+        for (int b = 0; b < sink_end; b++) {
+            selected_blocks.push_back(b);
+        }
+
+        // Local window blocks (deduplicate with sink)
+        int local_start = std::max(sink_end, n_blocks - n_local_b);
+        for (int b = local_start; b < n_blocks; b++) {
+            // Dedup: skip if already in sink range (happens when proc_n < actual, small windows)
+            if (b >= sink_end) {
+                selected_blocks.push_back(b);
+            }
+        }
+
+        llama_set_pflash_bsa_mask(draft_ctx, selected_blocks.data(), (int32_t)selected_blocks.size());
+    }
+
+    for (int32_t i = 0; i < actual; i += n_batch) {
+        int32_t n = std::min(actual - i, n_batch);
+        struct llama_batch batch = llama_batch_init(n, 0, 1);
+        batch.n_tokens = n;
+        for (int32_t j = 0; j < n; j++) {
+            batch.token[j]     = tokens[token_offset + i + j];
+            batch.pos[j]       = token_offset + i + j;
+            batch.n_seq_id[j]  = 1;
+            batch.seq_id[j][0] = 0;
+            batch.logits[j]    = 0;
+        }
+        int ret = llama_decode(draft_ctx, batch);
+        llama_batch_free(batch);
+        if (ret != 0) return false;
+    }
+    llama_synchronize(draft_ctx);
+
+    // Bulk read all K values in one pass (O(n_cells) instead of O(n_cells * n_tokens))
+    std::vector<int32_t> positions(actual);
+    int32_t n_read = llama_kv_cache_read_k_bulk(draft_ctx, score_layer, 0, &all_k[(size_t)token_offset * kv_dim], positions.data(), actual);
+    if (n_read != actual) return false;
+    return true;
+}
+
+std::vector<pflash_span> pflash_select(
+    const std::vector<float> & scores,
+    int32_t block_size,
+    int32_t n_tokens,
+    int32_t sink_tokens,
+    int32_t recent_tokens,
+    float keep_ratio,
+    int32_t min_keep_tokens)
+{
+    std::vector<pflash_span> result;
+
+    if (n_tokens <= 0) return result;
+
+    // Compute target budget
+    int32_t target_kept = std::max(min_keep_tokens, (int32_t)std::ceil(keep_ratio * n_tokens));
+    target_kept = std::min(target_kept, n_tokens);
+
+    // Early exit: keep everything
+    if (target_kept >= n_tokens) {
+        result.push_back({0, n_tokens});
+        return result;
+    }
+
+    // Build mandatory anchors
+    std::vector<pflash_span> anchors;
+
+    // Sink tokens (prefix)
+    int32_t sink_end = std::min(sink_tokens, n_tokens);
+    if (sink_end > 0) {
+        anchors.push_back({0, sink_end});
+    }
+
+    // Recent tokens (suffix)
+    int32_t recent_start = std::max(0, n_tokens - recent_tokens);
+    if (recent_start < n_tokens) {
+        anchors.push_back({recent_start, n_tokens});
+    }
+
+    // Coalesce anchors (merge overlapping)
+    if (anchors.size() >= 2) {
+        std::sort(anchors.begin(), anchors.end(),
+            [](const pflash_span & a, const pflash_span & b) { return a.start < b.start; });
+        std::vector<pflash_span> merged;
+        merged.push_back(anchors[0]);
+        for (size_t i = 1; i < anchors.size(); i++) {
+            if (anchors[i].start <= merged.back().end) {
+                merged.back().end = std::max(merged.back().end, anchors[i].end);
+            } else {
+                merged.push_back(anchors[i]);
+            }
+        }
+        anchors = merged;
+    }
+
+    // Count anchored tokens
+    int32_t anchored = 0;
+    for (const auto & a : anchors) {
+        anchored += (a.end - a.start);
+    }
+
+    // If anchors already meet budget, return them
+    if (anchored >= target_kept) {
+        return anchors;
+    }
+
+    // Middle budget: tokens to select from unanchored regions
+    int32_t middle_budget = target_kept - anchored;
+
+    // Build sorted list of blocks by score (descending)
+    int32_t n_blocks = (int32_t)scores.size();
+    std::vector<std::pair<int32_t, float>> ranked;
+    for (int32_t b = 0; b < n_blocks; b++) {
+        // Skip blocks that are fully covered by anchors
+        int32_t b_start = b * block_size;
+        int32_t b_end = std::min(b_start + block_size, n_tokens);
+
+        bool fully_covered = false;
+        for (const auto & a : anchors) {
+            if (b_start >= a.start && b_end <= a.end) {
+                fully_covered = true;
+                break;
+            }
+        }
+        if (!fully_covered) {
+            ranked.push_back({b, scores[b]});
+        }
+    }
+
+    // Sort by score descending, then by block index ascending (tiebreaker)
+    std::sort(ranked.begin(), ranked.end(),
+        [](const auto & a, const auto & b) {
+            if (a.second != b.second) return a.second > b.second;
+            return a.first < b.first;
+        });
+
+    // Select blocks greedily
+    int32_t middle_kept = 0;
+    std::vector<pflash_span> selected;
+    for (const auto & r : ranked) {
+        if (middle_kept >= middle_budget) break;
+
+        int32_t b = r.first;
+        int32_t b_start = b * block_size;
+        int32_t b_end = std::min(b_start + block_size, n_tokens);
+
+        // Compute incremental tokens (not covered by existing spans)
+        int32_t incr = b_end - b_start;
+        for (const auto & a : anchors) {
+            int32_t overlap_start = std::max(b_start, a.start);
+            int32_t overlap_end = std::min(b_end, a.end);
+            if (overlap_start < overlap_end) {
+                incr -= (overlap_end - overlap_start);
+            }
+        }
+        for (const auto & s : selected) {
+            int32_t overlap_start = std::max(b_start, s.start);
+            int32_t overlap_end = std::min(b_end, s.end);
+            if (overlap_start < overlap_end) {
+                incr -= (overlap_end - overlap_start);
+            }
+        }
+
+        if (incr > 0) {
+            selected.push_back({b_start, b_end});
+            middle_kept += incr;
+        }
+    }
+
+    // Combine anchors and selected spans
+    result = anchors;
+    result.insert(result.end(), selected.begin(), selected.end());
+
+    // Coalesce all spans
+    std::sort(result.begin(), result.end(),
+        [](const pflash_span & a, const pflash_span & b) { return a.start < b.start; });
+    std::vector<pflash_span> coalesced;
+    coalesced.push_back(result[0]);
+    for (size_t i = 1; i < result.size(); i++) {
+        if (result[i].start <= coalesced.back().end) {
+            coalesced.back().end = std::max(coalesced.back().end, result[i].end);
+        } else {
+            coalesced.push_back(result[i]);
+        }
+    }
+
+    return coalesced;
+}
+
+std::vector<llama_token> pflash_gather(
+    const std::vector<llama_token> & source,
+    const std::vector<pflash_span> & spans)
+{
+    std::vector<llama_token> result;
+    result.reserve(source.size());
+
+    for (const auto & span : spans) {
+        for (int32_t i = span.start; i < span.end && i < (int32_t)source.size(); i++) {
+            result.push_back(source[i]);
+        }
+    }
+
+    return result;
+}
+
+pflash_result pflash_compress(
+    struct llama_context * draft_ctx,
+    const std::vector<llama_token> & tokens,
+    const pflash_params & params)
+{
+    pflash_result res;
+    res.source_count = (int32_t)tokens.size();
+
+    // Check threshold
+    if ((int32_t)tokens.size() < params.threshold_tokens) {
+        res.bypassed = true;
+        res.tokens = tokens;
+        return res;
+    }
+
+    if (!draft_ctx) {
+        res.bypassed = true;
+        res.tokens = tokens;
+        return res;
+    }
+
+    // Compute adaptive keep ratio
+    float keep_ratio = params.keep_ratio;
+    if (params.keep_ratio_auto) {
+        int32_t n = (int32_t)tokens.size();
+        if (n < 25600) {
+            keep_ratio = 0.80f;
+        } else if (n < 65536) {
+            keep_ratio = 0.70f;
+        } else {
+            keep_ratio = 0.65f;
+        }
+    }
+
+    // Compute effective window size for auto-mode
+    int32_t effective_window = params.window_size;
+    if (params.use_bsa && params.bsa_auto_threshold > 0) {
+        if ((int32_t)tokens.size() <= params.bsa_auto_threshold) {
+            effective_window = 0;  // BSA single-pass
+        }
+    }
+
+    // Step 1: Run first window through drafter to populate KV cache for probing
+    int64_t t0 = ggml_time_us();
+    int32_t n_tokens = (int32_t)tokens.size();
+
+    // Min-scoring-budget guard: skip draft when scoring adds little beyond anchors
+    int32_t keep_budget = std::max(params.min_keep_tokens, (int32_t)std::ceil(keep_ratio * n_tokens));
+    int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
+    int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
+    if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
+        res.bypassed = true;
+        res.tokens = tokens;
+        return res;
+    }
+    int32_t win = effective_window > 0 ? std::min(effective_window, n_tokens) : n_tokens;
+    int32_t probe_n = std::min(win, n_tokens);
+    llama_memory_clear(llama_get_memory(draft_ctx), true);
+    llama_synchronize(draft_ctx);
+    int32_t n_batch = 2048;
+
+    // Set BSA block mask for initial probe window
+    if (params.use_bsa) {
+        const int BSA_BLOCK = 128;
+        const int n_sink_b  = std::max(1, params.sink_tokens   / BSA_BLOCK);
+        const int n_local_b = std::max(1, params.recent_tokens / BSA_BLOCK);
+        int n_blocks = (probe_n + BSA_BLOCK - 1) / BSA_BLOCK;
+        std::vector<int32_t> selected;
+        selected.reserve(n_sink_b + n_local_b);
+        int sink_end = std::min(n_sink_b, n_blocks);
+        for (int b = 0; b < sink_end; b++) selected.push_back(b);
+        int local_start = std::max(sink_end, n_blocks - n_local_b);
+        for (int b = local_start; b < n_blocks; b++) selected.push_back(b);
+        llama_set_pflash_bsa_mask(draft_ctx, selected.data(), (int32_t)selected.size());
+    }
+
+    for (int32_t i = 0; i < probe_n; i += n_batch) {
+        int32_t n = std::min(probe_n - i, n_batch);
+        auto batch = llama_batch_get_one(const_cast<llama_token *>(&tokens[i]), n);
+        if (llama_decode(draft_ctx, batch) != 0) {
+            LOG_ERR("pflash: draft decode failed at position %d", i);
+            res.bypassed = true; res.tokens = tokens; return res;
+        }
+    }
+    llama_synchronize(draft_ctx);
+

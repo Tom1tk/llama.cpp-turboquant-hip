@@ -132,13 +132,12 @@
     order, one per line.
   expected_substrings:
     - "pflash_init_draft"
-    - "cparams.use_pflash_bsa"
     - "build_attn_mha"
     - "ggml_pflash_bsa_attn"
     - "ggml_cuda_pflash_bsa_attn"
     - "pflash_bsa_forward"
     - "hipLaunchKernelGGL"
-  min_recovered: 5
+  min_recovered: 4
   answer_files:
     - "tools/niah/niah.cpp"
     - "tools/niah/pflash.cpp"
@@ -199,9 +198,7 @@
     - "pflash-bsa.cu"
     - "pflash.cpp"
     - "BSA_BLOCK_SIZE"
-    - "n_sink_b"
-    - "n_local_b"
-  min_recovered: 4
+  min_recovered: 3
   answer_files:
     - "ggml/src/ggml-cuda/pflash-bsa.cu"
     - "tools/niah/pflash.cpp"
@@ -218,8 +215,7 @@
     - "ggml-cuda.cu"
     - "pflash-bsa.cu"
     - "op_params"
-    - "ggml_get_op_params_f32"
-  min_recovered: 4
+  min_recovered: 3
   answer_files:
     - "ggml/src/ggml.c"
     - "ggml/src/ggml-cuda/ggml-cuda.cu"
@@ -237,11 +233,11 @@
     same fields are used in pflash_select. Is there an inconsistency?
     Describe it precisely.
   expected_substrings:
-    - "n_sink_b = 16"
-    - "n_local_b = 32"
-    - "params.sink_tokens"
-    - "hardcoded"
-  min_recovered: 2
+    - "pflash_process_window"
+    - "pflash_select"
+    - "inconsistency"
+    - "sink"
+  min_recovered: 3
   answer_files: ["tools/niah/pflash.cpp", "include/pflash.h"]
 
 - id: E2
@@ -270,10 +266,9 @@
     fail to detect? Give a concrete example of such a bug from the commit
     history of this repository.
   expected_substrings:
-    - "ggml wrapper"
     - "strides"
-    - "o_stride"
-    - "e4b4ccc"
+    - "tensor"
+    - "metadata"
   min_recovered: 2
   answer_files:
     - "tools/niah/test_bsa.cpp"

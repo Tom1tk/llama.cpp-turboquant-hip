@@ -87,7 +87,7 @@ baseline() {
             --fixture "$FIX" \
             --cache-type-k turbo3 --cache-type-v turbo3 \
             --gpu-layers -1 --ctx-size "$CTX" \
-            --output json 2>/dev/null \
+            --max-gen 512 --output json 2>/dev/null \
             | python3 -c "
 import json,sys,collections
 rs=[json.loads(l) for l in sys.stdin if l.startswith('{')]

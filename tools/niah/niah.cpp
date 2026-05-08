@@ -55,6 +55,8 @@ struct niah_params {
 };
 
 struct niah_fixture {
+    std::string id;
+    std::string type;
     std::string filler_text;
     std::string question;
     std::vector<std::string> expected_substrings;
@@ -155,6 +157,8 @@ static std::vector<niah_fixture> load_fixtures(const std::string &path) {
         try {
             auto j = json::parse(line);
             niah_fixture fix;
+            fix.id = j.value("id", "");
+            fix.type = j.value("type", "");
             fix.filler_text = j.value("filler_text", "");
             fix.question = j.value("question", "");
             fix.context_tokens = j.value("context_tokens", 0);
@@ -363,6 +367,8 @@ static void print_result_json(const niah_fixture &fix, const niah_result &res,
                                const niah_params & /*params*/, int run_idx)
 {
     json j;
+    j["id"] = fix.id;
+    j["type"] = fix.type;
     j["context_tokens"] = fix.context_tokens;
     j["prompt_tokens"] = res.n_prompt;
     j["gen_tokens"] = res.n_gen;

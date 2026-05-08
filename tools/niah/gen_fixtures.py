@@ -29,7 +29,9 @@ def gen_secret(rng):
     return f"{adj}-{noun}-{num}"
 
 def gen_filler(n_tokens_approx, rng):
-    n_words = int(n_tokens_approx / 0.75)
+    """Generate approximately n_tokens_approx of filler text.
+    Qwen's tokenizer averages ~1.5 tokens per English word, so use words ÷ 1.5."""
+    n_words = int(n_tokens_approx / 1.5)
     return " ".join(rng.choices(WORDS, k=n_words))
 
 def main():

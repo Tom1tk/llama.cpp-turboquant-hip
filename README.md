@@ -149,6 +149,25 @@ means auto-mode is enabled by default — set to 0 for manual control.
 Adaptive keep ratio (`--pflash-keep-auto`) uses 0.80 below 25k, 0.70 to 64k,
 0.65 above 64k — preventing anchor-dominated budgets at small contexts.
 
+**Phase 6C — Multi-trial NIAH sweep** ✓
+10-trial pass rates at 32k (~24k actual tokens) and 128k (~67k actual tokens).
+All tests use 10 random needle positions per configuration.
+
+| ctx | mode | kr=0.50 | kr=0.55 | kr=0.60 | kr=0.65 | kr=0.70 | kr=0.75 | kr=0.80 |
+|-----|------|---------|---------|---------|---------|---------|---------|---------|
+| 32k | WIN  | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   |
+| 32k | BSA  | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   |
+| 128k| WIN  | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   |
+| 128k| BSA  | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   | 10/10   |
+
+NIAH is saturated at kr=0.50 — quality floor below measurement range. PFlash's anchor
+bias (first 2k + last 4k kept always) suffices for simple needle extraction. Semantic
+code tests (Phase 7) will establish the real quality floor.
+
+BSA mask size (S=8 blocks, M=16, L=32, XL=48) has zero impact on pass rate or draft
+time at 32k — all 10/10 with draft ~2.86s. Mask reduction gains are visible only
+above ~64k context where the KV footprint dominates.
+
 **Phase 7 — Semantic code tests** (in development)
 PFlash quality validation on real code comprehension tasks using the PFlash repo
 itself as the test corpus (92k tokens, 16 files). 20 hand-authored questions across

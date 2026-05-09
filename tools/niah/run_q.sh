@@ -15,7 +15,7 @@ KR="${3:-1.00}"
 POS="${4:-early}"
 RUN="${5:-0}"
 TIMEOUT="${PHASE7_TIMEOUT:-600}"    # override: PHASE7_TIMEOUT=300 bash run_q.sh ...
-MAX_GEN="${PHASE7_MAXGEN:-1024}"
+MAX_GEN="${PHASE7_MAXGEN:-2048}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="${SCRIPT_DIR}/../.."

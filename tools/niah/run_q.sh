@@ -64,6 +64,17 @@ CHATML_ARGS=""
 if [ "$MODE" = "baseline" ]; then
     CHATML_ARGS="--no-chatml"
     CTX=32768
+elif [ "$MODE" = "bsa" ]; then
+    # BSA single-pass needs draft KV cache large enough to hold ALL prompt tokens
+    # (context + question + filler + chatml formatting = prompt_tokens, not context_tokens)
+    CTX=$(python3 -c "
+import json
+line = open('$FIXTURE').readline()
+d = json.loads(line)
+# prompt_tokens ≈ context_tokens * 1.2–1.25; use generous margin
+ct = d.get('context_tokens', 32768)
+print(max(ct + 8192, 32768))
+")
 else
     CTX=$(python3 -c "
 import json

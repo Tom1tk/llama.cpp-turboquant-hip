@@ -194,7 +194,8 @@ static std::vector<llama_token> tokenize_prompt(
     const struct llama_vocab *vocab,
     const std::string &filler,
     const std::string &question,
-    bool chatml)
+    bool chatml,
+    bool no_think)
 {
     std::string prompt;
     if (chatml) {
@@ -227,7 +228,7 @@ static std::vector<llama_token> tokenize_prompt(
                 }
             }
         }
-        if (!has_think) {
+        if (!has_think && !no_think) {
             auto think_close = common_tokenize(vocab, "</think>\n", false);
             tokens.insert(tokens.end(), think_close.begin(), think_close.end());
         }
@@ -246,7 +247,7 @@ static niah_result run_fixture(
 {
     niah_result res;
 
-    auto tokens = tokenize_prompt(vocab, fix.filler_text, fix.question, params.chatml);
+    auto tokens = tokenize_prompt(vocab, fix.filler_text, fix.question, params.chatml, params.no_think);
     if (tokens.empty()) {
         LOG_ERR("tokenization failed");
         return res;
@@ -356,6 +357,19 @@ static niah_result run_fixture(
     res.n_gen = (int64_t)generated.size();
 
     res.answer = common_detokenize(ctx, generated, false);
+
+    // Strip <think>...</think> blocks from answer when thinking is disabled
+    if (params.no_think) {
+        size_t think_end = res.answer.find("</think>");
+        if (think_end != std::string::npos) {
+            size_t think_start = res.answer.find("<think>");
+            if (think_start != std::string::npos && think_start < think_end) {
+                size_t start = think_end + 8; // len("</think>")
+                while (start < res.answer.size() && res.answer[start] == '\n') start++;
+                res.answer = res.answer.substr(start);
+            }
+        }
+    }
 
     size_t recovered = 0;
     for (const auto &sub : fix.expected_substrings) {

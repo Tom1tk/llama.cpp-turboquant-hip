@@ -51,8 +51,17 @@ def extract_section(content, keywords, context_lines=300):
     # No keyword found — return first context_lines*2 lines
     return "".join(lines[:context_lines * 2])
 
-def build_answer_block(answer_files, expected_substrings, answer_budget):
+def build_answer_block(answer_files, expected_substrings, question_text, answer_budget):
     """Build context string from answer files, extracting relevant sections."""
+    # Extract long identifiers from question text — these are more specific, search first
+    import re as _re
+    q_keywords = []
+    for w in _re.findall(r'[a-zA-Z_]\w{5,}', question_text):
+        if w.lower() not in {'based','provided','source','which','there','these','their','about','every','location','nature','required','should','would','identify','specific','between','starting','during'}:
+            if w not in q_keywords:
+                q_keywords.append(w)
+    # Question-specific keywords first (more selective), then expected substrings
+    all_keywords = q_keywords + list(expected_substrings)
     parts = []
     remaining = answer_budget
     for relpath in answer_files:
@@ -63,7 +72,7 @@ def build_answer_block(answer_files, expected_substrings, answer_budget):
         # Extract relevant section if file is large
         raw_toks = approx_tokens(content)
         if raw_toks > 3000:
-            section = extract_section(content, expected_substrings)
+            section = extract_section(content, all_keywords)
             section_toks = approx_tokens(section)
             if section_toks > remaining:
                 # Truncate section to budget
@@ -155,7 +164,7 @@ def main():
 
         answer_files    = q.get("answer_files", [])
         expected        = q.get("expected_substrings", [])
-        answer_block, used_toks = build_answer_block(answer_files, expected, args.answer_budget)
+        answer_block, used_toks = build_answer_block(answer_files, expected, q["question"], args.answer_budget)
         filler          = build_filler(args.filler_budget, set(answer_files))
 
         for pos in args.positions:

@@ -15,7 +15,7 @@ KR="${3:-1.00}"
 POS="${4:-early}"
 RUN="${5:-0}"
 TIMEOUT="${PHASE7_TIMEOUT:-600}"    # override: PHASE7_TIMEOUT=300 bash run_q.sh ...
-MAX_GEN="${PHASE7_MAXGEN:-512}"
+MAX_GEN="${PHASE7_MAXGEN:-1024}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="${SCRIPT_DIR}/../.."
@@ -58,14 +58,20 @@ elif [ "$MODE" = "bsa" ]; then
                  --pflash-sink 2048 --pflash-recent 4096 \
                  --pflash-block-size 128 --pflash-layer -1"
 fi
-# baseline: no draft, no PFlash args
+# baseline: no draft, no PFlash args, no chatml (raw prompt, no thinking)
+CHATML_ARGS=""
 
-CTX=$(python3 -c "
+if [ "$MODE" = "baseline" ]; then
+    CHATML_ARGS="--no-chatml"
+    CTX=32768
+else
+    CTX=$(python3 -c "
 import json
 line = open('$FIXTURE').readline()
 d = json.loads(line)
 print(d.get('context_tokens', 32768) + 2048)
 ")
+fi
 
 printf "  RUN  %-4s %-8s kr=%-4s pos=%-5s r=%s ctx=%s\n" "$QID" "$MODE" "$KR" "$POS" "$RUN" "$CTX"
 
@@ -76,7 +82,7 @@ RAW=$(timeout "$TIMEOUT" ./build/bin/llama-niah \
     --gpu-layers -1 --no-warmup \
     --ctx-size "$CTX" \
     --max-gen "$MAX_GEN" \
-    $DRAFT_ARGS $PFLASH_ARGS \
+    $DRAFT_ARGS $PFLASH_ARGS $CHATML_ARGS \
     --output json 2>/dev/null) || true
 
 if [ -z "$RAW" ]; then

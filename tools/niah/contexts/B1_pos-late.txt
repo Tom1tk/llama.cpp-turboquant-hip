@@ -842,6 +842,11 @@ private:
 
 // ===== FILE: src/llama-context.cpp =====
 
+}
+
+float * llama_context::get_logits() {
+    output_reorder();
+
     return logits.data;
 }
 
@@ -1437,8 +1442,3 @@ int llama_context::encode(const llama_batch & batch_inp) {
                         const uint32_t n_embd_out = hparams.n_embd_out();
                         embd_seq_out[seq_id].resize(n_embd_out);
                         ggml_backend_tensor_get_async(backend_embd, t_embd, embd_seq_out[seq_id].data(), (n_embd_out*seq_idx)*sizeof(float), n_embd_out*sizeof(float));
-                    }
-                } break;
-            case LLAMA_POOLING_TYPE_RANK:
-                {
-                    // extract the rerank score - n_cls_out floats per sequence

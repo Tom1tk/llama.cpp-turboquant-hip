@@ -579,6 +579,7 @@ static bool pflash_process_window(
             }
         }
 
+        GGML_ASSERT(std::find(selected_blocks.begin(), selected_blocks.end(), 0) != selected_blocks.end());
         llama_set_pflash_bsa_mask(draft_ctx, selected_blocks.data(), (int32_t)selected_blocks.size());
     }
 
@@ -678,8 +679,7 @@ std::vector<pflash_span> pflash_select(
     int32_t n_blocks = (int32_t)scores.size();
     std::vector<std::pair<int32_t, float>> ranked;
     for (int32_t b = 0; b < n_blocks; b++) {
-        // Skip blocks that are fully covered by anchors
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         bool fully_covered = false;
@@ -708,7 +708,7 @@ std::vector<pflash_span> pflash_select(
         if (middle_kept >= middle_budget) break;
 
         int32_t b = r.first;
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         // Compute incremental tokens (not covered by existing spans)
@@ -821,6 +821,7 @@ pflash_result pflash_compress(
     int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
     int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
     if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
+        LOG_INF("pflash: bypassed — scoring_budget=%d < min_scoring_budget=%d", scoring_budget, params.min_scoring_budget);
         res.bypassed = true;
         res.tokens = tokens;
         return res;
@@ -835,6 +836,14 @@ pflash_result pflash_compress(
     if (params.use_bsa) {
         const int BSA_BLOCK = 128;
         const int n_sink_b  = std::max(1, params.sink_tokens   / BSA_BLOCK);
+        const int n_local_b = std::max(1, params.recent_tokens / BSA_BLOCK);
+        int n_blocks = (probe_n + BSA_BLOCK - 1) / BSA_BLOCK;
+        std::vector<int32_t> selected;
+        selected.reserve(n_sink_b + n_local_b);
+        int sink_end = std::min(n_sink_b, n_blocks);
+        for (int b = 0; b < sink_end; b++) selected.push_back(b);
+        int local_start = std::max(sink_end, n_blocks - n_local_b);
+        for (int b = local_start; b < n_blocks; b++) selected.push_back(b);
 
 
 // ===== FILE: include/pflash.h =====

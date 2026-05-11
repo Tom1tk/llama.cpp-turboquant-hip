@@ -669,7 +669,8 @@ static std::vector<llama_token> tokenize_prompt(
     const struct llama_vocab *vocab,
     const std::string &filler,
     const std::string &question,
-    bool chatml)
+    bool chatml,
+    bool no_think)
 {
     std::string prompt;
     if (chatml) {
@@ -702,7 +703,7 @@ static std::vector<llama_token> tokenize_prompt(
                 }
             }
         }
-        if (!has_think) {
+        if (!has_think && !no_think) {
             auto think_close = common_tokenize(vocab, "</think>\n", false);
             tokens.insert(tokens.end(), think_close.begin(), think_close.end());
         }
@@ -721,7 +722,7 @@ static niah_result run_fixture(
 {
     niah_result res;
 
-    auto tokens = tokenize_prompt(vocab, fix.filler_text, fix.question, params.chatml);
+    auto tokens = tokenize_prompt(vocab, fix.filler_text, fix.question, params.chatml, params.no_think);
     if (tokens.empty()) {
         LOG_ERR("tokenization failed");
         return res;
@@ -776,53 +777,6 @@ static niah_result run_fixture(
         int warmup_n = std::min((int)prefill_tokens.size(), params.n_batch);
         auto warmup_tokens = prefill_tokens;
         warmup_tokens.resize(warmup_n);
-        auto batch = llama_batch_get_one(warmup_tokens.data(), warmup_tokens.size());
-        llama_decode(ctx, batch);
-        llama_synchronize(ctx);
-        llama_memory_clear(llama_get_memory(ctx), true);
-        llama_synchronize(ctx);
-    }
-
-    int64_t t_start = ggml_time_us();
-
-    int n_processed = 0;
-    std::vector<llama_token> batch_tokens(params.n_batch);
-    while (n_processed < (int)prefill_tokens.size()) {
-        int n_tokens = std::min((int)prefill_tokens.size() - n_processed, params.n_batch);
-        for (int i = 0; i < n_tokens; i++) {
-            batch_tokens[i] = prefill_tokens[n_processed + i];
-        }
-        auto batch = llama_batch_get_one(batch_tokens.data(), n_tokens);
-        if (llama_decode(ctx, batch) != 0) {
-            LOG_ERR("llama_decode failed during prefill");
-            return res;
-        }
-        n_processed += n_tokens;
-    }
-    llama_synchronize(ctx);
-    int64_t t_prefill_end = ggml_time_us();
-
-    llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
-
-    int64_t t_first_token = ggml_time_us();
-
-    res.first_token_us = t_first_token - t_start;
-    res.prefill_us = t_prefill_end - t_start;
-
-    std::vector<llama_token> generated;
-    generated.push_back(new_token);
-
-    for (int i = 1; i < params.max_gen; i++) {
-        if (llama_vocab_is_eog(vocab, new_token)) {
-            break;
-        }
-        auto batch = llama_batch_get_one(&new_token, 1);
-        if (llama_decode(ctx, batch) != 0) {
-            break;
-        }
-        llama_synchronize(ctx);
-        new_token = llama_sampler_sample(smpl, ctx, -1);
-        generated.push_back(new_token);
 
 
 // ===== FILE: include/pflash.h =====

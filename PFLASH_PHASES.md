@@ -418,15 +418,68 @@ An independent code review identified 8 findings across correctness, integration
 - **int32_t overflow (C5)**: All `b * block_size` computations cast through `int64_t`
 - **Integer division (B4)**: `aggregate_results.py` changed from `100 * n_pass // n_total` to `round(100.0 * n_pass / n_total)` for fractional precision
 - **Dynamic mask sizing (B2)**: Mask capacity now computed from `cparams.n_ctx / cparams.bsa_block_size`, minimum 1024
-
 ### Build Verification
+
 All targets compile cleanly:
 - `llama-niah` — ✓
 - `llama-server` — ✓
 - `test-backend-ops` — ✓
 - `test-bsa` — ✓
 
-### Build Verification
+### Review Items Addressed
+
+| # | Finding | Status |
+|---|---------|--------|
+| #1 (CRITICAL) | CPU reference for BSA op | ✅ ops.cpp +90 lines |
+| #2 (HIGH) | Fix `read_k_data_bulk` offset | ✅ dead code removed |
+| #3 (HIGH) | Kernel unit tests | ✅ test_bsa.cpp + test-backend-ops |
+| #4 (MEDIUM) | Wire `--pflash-bsa` to server | ✅ arg.cpp + server-context |
+| #5 (MEDIUM) | Dynamic BSA mask cap | ✅ max(1024, n_ctx/bsa_block_size) |
+| #6 (MEDIUM) | Fixed seed / CI averaging | ✅ greedy deterministic + float div |
+| #7 (LOW) | `GGML_ABORT` on -1 return | ✅ `GGML_ASSERT(ret == 0)` |
+| #8 (LOW) | Log dropped rows | ✅ LOG_WRN + LOG_INF signals |
+
+---
+
+## Phase 9 — Post-Implementation Validation
+
+### 9A: Kernel Test Execution
+
+Both kernel-level test suites pass with zero errors:
+
+| Test | Configuration | Result |
+|------|--------------|--------|
+| `test-bsa` (BSA kernel) | D=256, n_q=16, n_kv=256, n_heads=8 | ✅ max_rel_error=0.000000 |
+| `test-bsa` (scoring kernel) | D=256, n_tokens=512, block=128 | ✅ max_rel_error=0.000001 |
+| `test-backend-ops` (PFLASH_BSA_ATTN) | 17 configs: D∈{64,128}, N∈{1,4}, NKV∈{128,512}, NH∈{2,4} + GQA(4h/2kv) | ✅ 17/17 on ROCm0 |
+
+### 9A Infrastructure Fixes
+
+Three bugs were found and fixed during kernel test execution:
+
+1. **Missing `ggml_get_n_tasks` case** (`ggml/src/ggml-cpu/ggml-cpu.c`): `GGML_OP_PFLASH_BSA_ATTN` was absent from the n_tasks switch, causing `GGML_ABORT` in `ggml_graph_plan`. Added with `n_tasks = n_threads`.
+
+2. **Struct layout mismatch in `initialize_tensors`** (`tests/test-backend-ops.cpp`): Direct `block_mask->data[i] = i` writes triggered a segfault due to compiler auto-vectorization of the I32 init loop. Fixed by using `ggml_backend_tensor_set()` instead.
+
+3. **Missing `#include <vector>`** (`ggml/src/ggml-cpu/ops.cpp`): The CPU BSA reference uses `std::vector<float>` for the accumulator. Include was added for portability.
+
+### 9B: NIAH Re-Validation (kr=0.65, All Positions)
+
+| Mode | early | late | mid | **Total** |
+|------|-------|------|-----|-----------|
+| baseline (kr=1.00, no compression) | 19/22 (86%) | 20/22 (90%) | 18/22 (81%) | **57/66 (86%)** |
+| windowed (kr=0.65) | 19/22 (86%) | 18/22 (81%) | 17/22 (77%) | **54/66 (82%)** |
+| bsa (kr=0.65) | 19/22 (86%) | 18/22 (81%) | 15/22 (68%) | **52/66 (79%)** |
+
+**Analysis**: At kr=0.65, windowed PFlash matches baseline at early positions and drops 9% at late, 4% at mid. BSA mode performs near-identically to windowed at early/late but drops more at mid (68% vs 77%). The 9 baseline failures (A4×3, B6 mid, C2 early/mid, E2×3) are inherent model capability limits at 32k — not PFlash-induced.
+
+### 9C: Flag Flow and CPU Fallback
+
+- `--pflash-bsa` flag verified in both `llama-niah --help` and `llama-server --help`
+- Wiring: `arg.cpp` → `common_params_speculative.pflash_bsa` → `cparams.use_pflash_bsa` → `pparams.use_bsa`
+- CPU fallback: `ggml-cpu.c` dispatches `GGML_OP_PFLASH_BSA_ATTN` → `ggml_compute_forward_pflash_bsa_attn` → causal online softmax in `ops.cpp`. Verified correct by test-backend-ops CPU-vs-GPU comparison (17/17). CPU-only mode tested via `test-backend-ops -o PFLASH_BSA_ATTN` without `-b` flag — passes all configs.
+
+---
 
 ## Remaining Work
 

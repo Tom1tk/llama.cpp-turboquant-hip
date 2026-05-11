@@ -2,6 +2,7 @@
 
 // ===== FILE: ggml/src/ggml-cuda/ggml-cuda.cu =====
 
+    if (dst->src[0] != nullptr && ggml_backend_buft_is_cuda_split(dst->src[0]->buffer->buft)) {
         ggml_cuda_set_peer_access(dst->src[1]->ne[1], ctx.device);
     }
 
@@ -601,7 +602,6 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
         }
     }
 
-    if (graph->extra.size() != (size_t) srcs_extra.size()) {
 
 
 // ===== FILE: ggml/src/ggml-cuda/pflash-bsa.cuh =====

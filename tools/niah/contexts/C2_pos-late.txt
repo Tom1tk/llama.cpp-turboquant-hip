@@ -579,6 +579,7 @@ static bool pflash_process_window(
             }
         }
 
+        GGML_ASSERT(std::find(selected_blocks.begin(), selected_blocks.end(), 0) != selected_blocks.end());
         llama_set_pflash_bsa_mask(draft_ctx, selected_blocks.data(), (int32_t)selected_blocks.size());
     }
 
@@ -678,8 +679,7 @@ std::vector<pflash_span> pflash_select(
     int32_t n_blocks = (int32_t)scores.size();
     std::vector<std::pair<int32_t, float>> ranked;
     for (int32_t b = 0; b < n_blocks; b++) {
-        // Skip blocks that are fully covered by anchors
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         bool fully_covered = false;
@@ -708,7 +708,7 @@ std::vector<pflash_span> pflash_select(
         if (middle_kept >= middle_budget) break;
 
         int32_t b = r.first;
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         // Compute incremental tokens (not covered by existing spans)
@@ -821,6 +821,7 @@ pflash_result pflash_compress(
     int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
     int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
     if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
+        LOG_INF("pflash: bypassed — scoring_budget=%d < min_scoring_budget=%d", scoring_budget, params.min_scoring_budget);
         res.bypassed = true;
         res.tokens = tokens;
         return res;
@@ -843,6 +844,9 @@ pflash_result pflash_compress(
         for (int b = 0; b < sink_end; b++) selected.push_back(b);
         int local_start = std::max(sink_end, n_blocks - n_local_b);
         for (int b = local_start; b < n_blocks; b++) selected.push_back(b);
+        // Defensive: verify block 0 (sink) is always in the selected set
+        // n_sink_b >= 1 guarantees this, but assert explicitly for future refactoring safety
+        GGML_ASSERT(std::find(selected.begin(), selected.end(), 0) != selected.end());
         llama_set_pflash_bsa_mask(draft_ctx, selected.data(), (int32_t)selected.size());
     }
 
@@ -876,9 +880,6 @@ pflash_result pflash_compress(
         LOG_ERR("pflash: failed to read K cache at layer %d", score_layer);
         res.bypassed = true; res.tokens = tokens; return res;
     }
-
-    // Step 4: Read K data for all tokens
-    std::vector<float> all_k((size_t)n_tokens * kv_dim);
 
 
 // ===== FILE: src/llama-context.cpp =====
@@ -1677,12 +1678,13 @@ void ggml_cuda_pflash_bsa_attn(ggml_backend_cuda_context & ctx, ggml_tensor * ds
     const int kv_stride      = k->nb[1] / sizeof(float);
     const int kv_head_stride = k->nb[2] / sizeof(float);
 
-    pflash_bsa_forward(
+    int32_t ret = pflash_bsa_forward(
         (const float*)q->data, (const float*)k->data, (const float*)v->data,
         (const int*)block_mask->data, n_selected,
         (float*)dst->data, scale, n_heads, n_heads_kv, n_q, n_kv, head_dim,
         q_stride, q_head_stride, o_stride, o_head_stride, kv_stride, kv_head_stride);
 
+    GGML_ASSERT(ret == 0 && "PFLASH_BSA_ATTN: kernel launch failed (unsupported head_dim?)");
     GGML_ASSERT(hipGetLastError() == hipSuccess);
 }
 

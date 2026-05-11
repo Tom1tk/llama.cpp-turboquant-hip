@@ -5,6 +5,7 @@
 
 #include "llama.h"
 #include "log.h"
+#include "pflash-score.h"
 
 #ifdef GGML_USE_HIP
 #include <hip/hip_runtime.h>
@@ -47,23 +48,19 @@ static float max_rel_error(const std::vector<float> & a, const std::vector<float
     return max_err;
 }
 
-// CPU reference: full attention with causal mask + softmax
 static std::vector<float> cpu_attention(
-    const std::vector<float> & Q, // [n_q, n_heads, D] row-major
-    const std::vector<float> & K, // [n_kv, n_heads, D] row-major
-    const std::vector<float> & V, // [n_kv, n_heads, D] row-major
+    const std::vector<float> & Q,
+    const std::vector<float> & K,
+    const std::vector<float> & V,
     int n_q, int n_heads, int n_kv, int D,
     float scale)
 {
     std::vector<float> O((size_t)n_q * n_heads * D, 0.0f);
-
     for (int h = 0; h < n_heads; h++) {
         for (int qi = 0; qi < n_q; qi++) {
-            // Compute all attention scores S[ki]
             std::vector<float> S(n_kv, -INFINITY);
             float m_max = -INFINITY;
-
-            for (int ki = 0; ki <= qi; ki++) {  // causal mask
+            for (int ki = 0; ki <= qi; ki++) {
                 float s = 0.0f;
                 for (int d = 0; d < D; d++) {
                     s += Q[((size_t)qi * n_heads + h) * D + d] *
@@ -72,12 +69,9 @@ static std::vector<float> cpu_attention(
                 S[ki] = s * scale;
                 if (S[ki] > m_max) m_max = S[ki];
             }
-
-            // Online softmax
             float l = 0.0f;
             float * out = &O[((size_t)qi * n_heads + h) * D];
             for (int d = 0; d < D; d++) out[d] = 0.0f;
-
             for (int ki = 0; ki <= qi; ki++) {
                 if (S[ki] != -INFINITY) {
                     float p = expf(S[ki] - m_max);
@@ -87,7 +81,6 @@ static std::vector<float> cpu_attention(
                     }
                 }
             }
-
             l = std::max(l, 1e-12f);
             for (int d = 0; d < D; d++) out[d] /= l;
         }
@@ -95,23 +88,49 @@ static std::vector<float> cpu_attention(
     return O;
 }
 
-int main(int argc, char ** argv) {
-    ggml_time_init();
-    (void)argc; (void)argv;
+static void cpu_score(
+    const std::vector<float> & K,
+    int n_tokens, int kv_dim, int block_size,
+    std::vector<float> & scores_out)
+{
+    int n_blocks = (n_tokens + block_size - 1) / block_size;
+    scores_out.assign((size_t)n_blocks, 0.0f);
+    const float * last_K = &K[(size_t)(n_tokens - 1) * kv_dim];
+    float last_len = 0.0f;
+    for (int i = 0; i < kv_dim; i++) last_len += last_K[i] * last_K[i];
+    last_len = sqrtf(fmaxf(last_len, 1e-12f));
+    for (int b = 0; b < n_blocks; b++) {
+        int start = b * block_size;
+        int end = std::min(start + block_size, n_tokens);
+        std::vector<double> mean_buf((size_t)kv_dim, 0.0);
+        for (int p = start; p < end; p++) {
+            const float * kp = &K[(size_t)p * kv_dim];
+            for (int i = 0; i < kv_dim; i++) mean_buf[i] += kp[i];
+        }
+        float inv = 1.0f / (float)(end - start);
+        for (int i = 0; i < kv_dim; i++) mean_buf[i] *= inv;
+        float dot = 0.0f, ml = 0.0f;
+        for (int i = 0; i < kv_dim; i++) {
+            dot += (float)mean_buf[i] * last_K[i];
+            ml += (float)(mean_buf[i] * mean_buf[i]);
+        }
+        scores_out[b] = dot / (sqrtf(fmaxf(ml, 1e-12f)) * last_len);
+    }
+}
 
-    printf("=== BSA Kernel Unit Test ===\n");
+static int test_bsa_kernel() {
+    printf("\n--- BSA Kernel Unit Test ---\n");
 
-    const int D = 256;        // head_dim (matching Qwen3.5-0.8B)
-    const int n_q = 16;       // query tokens
-    const int n_kv = 256;     // KV tokens
-    const int n_heads = 8;    // attention heads
-    const int n_heads_kv = 8; // no GQA for unit test (CPU reference doesn't handle GQA)
+    const int D = 256;
+    const int n_q = 16;
+    const int n_kv = 256;
+    const int n_heads = 8;
+    const int n_heads_kv = 8;
     const float attn_scale = 1.0f / sqrtf((float)D);
 
     const int BSA_BLOCK = 128;
     const int n_blocks = (n_kv + BSA_BLOCK - 1) / BSA_BLOCK;
 
-    // Allocate host memory
     const size_t q_size = (size_t)n_q * n_heads * D;
     const size_t kv_size = (size_t)n_kv * n_heads_kv * D;
     std::vector<float> h_Q(q_size);
@@ -119,7 +138,6 @@ int main(int argc, char ** argv) {
     std::vector<float> h_V(kv_size);
     std::vector<float> h_O(q_size);
 
-    // Contiguous strides: Q[qi][h][d], K[ki][h][d]
     int q_stride = n_heads * D;
     int q_head_stride = D;
     int kv_stride = n_heads_kv * D;
@@ -129,15 +147,12 @@ int main(int argc, char ** argv) {
     fill_random(h_K.data(), kv_size, 1.0f);
     fill_random(h_V.data(), kv_size, 1.0f);
 
-    // CPU reference
     auto cpu_O = cpu_attention(h_Q, h_K, h_V, n_q, n_heads, n_kv, D, attn_scale);
 
-    // Block mask: attend to ALL KV blocks (full attention)
     std::vector<int32_t> block_mask(n_blocks);
     for (int b = 0; b < n_blocks; b++) block_mask[b] = b;
 
 #ifdef GGML_USE_HIP
-    // GPU: allocate and copy
     float *d_Q, *d_K, *d_V, *d_O;
     int *d_mask;
     hipMalloc(&d_Q, q_size * sizeof(float));
@@ -171,7 +186,6 @@ int main(int argc, char ** argv) {
     return 0;
 #endif
 
-    // Compare
     float max_err = max_rel_error(cpu_O, h_O);
     printf("  Max relative error: %.6f\n", max_err);
 
@@ -181,8 +195,6 @@ int main(int argc, char ** argv) {
         return 0;
     } else {
         printf("  FAIL: BSA deviates from CPU reference (max_err=%.6f > tol=%.6f)\n", max_err, tol);
-
-        // Print first few elements for debugging
         printf("  First 8 outputs:\n");
         printf("    CPU: ");
         for (int i = 0; i < 8; i++) printf("%.4f ", cpu_O[i]);
@@ -191,6 +203,76 @@ int main(int argc, char ** argv) {
         printf("\n");
         return 1;
     }
+}
+
+static int test_score_kernel() {
+    printf("\n--- Scoring Kernel Unit Test ---\n");
+
+    const int D = 256;
+    const int n_tokens = 512;
+    const int block_size = 128;
+    const int n_blocks = (n_tokens + block_size - 1) / block_size;
+
+    std::vector<float> h_K((size_t)n_tokens * D);
+    fill_random(h_K.data(), (size_t)n_tokens * D, 1.0f);
+
+    std::vector<float> cpu_scores;
+    cpu_score(h_K, n_tokens, D, block_size, cpu_scores);
+
+    std::vector<float> gpu_scores((size_t)n_blocks, 0.0f);
+
+#ifdef GGML_USE_HIP
+    float * d_K = nullptr;
+    hipMalloc(&d_K, (size_t)n_tokens * D * sizeof(float));
+    hipMemcpy(d_K, h_K.data(), (size_t)n_tokens * D * sizeof(float), hipMemcpyHostToDevice);
+
+    int32_t n_scored = pflash_score_gpu(d_K, n_tokens, D, block_size, gpu_scores.data());
+    hipDeviceSynchronize();
+    hipFree(d_K);
+
+    if (n_scored != n_blocks) {
+        fprintf(stderr, "FAIL: pflash_score_gpu returned %d (expected %d)\n", n_scored, n_blocks);
+        return 1;
+    }
+#else
+    fprintf(stderr, "GPU not available, skipping GPU test\n");
+    return 0;
+#endif
+
+    float max_err = max_rel_error(cpu_scores, gpu_scores);
+    printf("  Max relative error: %.6f\n", max_err);
+
+    const float tol = 1e-3f;
+    if (max_err <= tol) {
+        printf("  PASS: pflash_score matches CPU reference within tolerance\n");
+        return 0;
+    } else {
+        printf("  FAIL: pflash_score deviates from CPU reference (max_err=%.6f > tol=%.6f)\n", max_err, tol);
+        printf("  First 8 scores:\n");
+        printf("    CPU: ");
+        for (int i = 0; i < 8; i++) printf("%.4f ", cpu_scores[i]);
+        printf("\n    GPU: ");
+        for (int i = 0; i < 8; i++) printf("%.4f ", gpu_scores[i]);
+        printf("\n");
+        return 1;
+    }
+}
+
+int main(int argc, char ** argv) {
+    ggml_time_init();
+    (void)argc; (void)argv;
+
+    printf("=== PFlash Kernel Unit Tests ===\n");
+
+    int bsa_result = test_bsa_kernel();
+    int score_result = test_score_kernel();
+
+    if (bsa_result == 0 && score_result == 0) {
+        printf("\n=== ALL TESTS PASSED ===\n");
+        return 0;
+    }
+    printf("\n=== SOME TESTS FAILED ===\n");
+    return bsa_result ? bsa_result : score_result;
 }
 
 
@@ -386,12 +468,13 @@ void ggml_cuda_pflash_bsa_attn(ggml_backend_cuda_context & ctx, ggml_tensor * ds
     const int kv_stride      = k->nb[1] / sizeof(float);
     const int kv_head_stride = k->nb[2] / sizeof(float);
 
-    pflash_bsa_forward(
+    int32_t ret = pflash_bsa_forward(
         (const float*)q->data, (const float*)k->data, (const float*)v->data,
         (const int*)block_mask->data, n_selected,
         (float*)dst->data, scale, n_heads, n_heads_kv, n_q, n_kv, head_dim,
         q_stride, q_head_stride, o_stride, o_head_stride, kv_stride, kv_head_stride);
 
+    GGML_ASSERT(ret == 0 && "PFLASH_BSA_ATTN: kernel launch failed (unsupported head_dim?)");
     GGML_ASSERT(hipGetLastError() == hipSuccess);
 }
 

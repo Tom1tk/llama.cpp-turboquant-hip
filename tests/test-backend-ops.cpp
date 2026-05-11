@@ -6607,7 +6607,7 @@ struct test_pflash_bsa_attn : public test_case {
         for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
             if (t->type == GGML_TYPE_F32) {
                 init_tensor_uniform(t, -1.0f, 1.0f);
-            } else if (t->type == GGML_TYPE_I32 && t->ne[0] > 1) {
+            } else if (t->type == GGML_TYPE_I32) {
                 block_mask = t;
             }
         }

@@ -398,7 +398,7 @@ Per-question timing ranges from ~20s (A3, 8.7k ctx) to ~100s (C1, 25k ctx). BSA 
 ## Phase 8 — Code Review Response (Comprehensive Fixes)
 
 ### Motivation
-An independent code review (`pflash-review-opus.md`) identified 8 findings across correctness, integration, robustness, and test infrastructure. All 8 were addressed and verified.
+An independent code review identified 8 findings across correctness, integration, robustness, and test infrastructure. All 8 were addressed and verified.
 
 ### Changes (10 files, 309 insertions, 64 deletions)
 
@@ -426,20 +426,7 @@ All targets compile cleanly:
 - `test-backend-ops` — ✓
 - `test-bsa` — ✓
 
-### Review Items Addressed (from `pflash-review-opus.md` prioritisation)
-
-| Review # | Description | Status |
-|----------|------------|--------|
-| #1 (CRITICAL) | CPU reference for BSA op | ✅ A1 |
-| #2 (HIGH) | Fix `read_k_data_bulk` offset | ✅ A2 (dead code removed) |
-| #3 (HIGH) | Kernel unit tests | ✅ A3 |
-| #4 (MEDIUM) | Wire `--pflash-bsa` to server | ✅ B1 |
-| #5 (MEDIUM) | Dynamic BSA mask | ✅ B2 |
-| #6 (MEDIUM) | Fixed seed / CI averaging | ✅ B3 (greedy deterministic) + B4 (integer div) |
-| #7 (LOW) | `GGML_ABORT` on -1 return | ✅ C1 |
-| #8 (LOW) | Log dropped rows | ✅ C2 + C3 |
-
----
+### Build Verification
 
 ## Remaining Work
 

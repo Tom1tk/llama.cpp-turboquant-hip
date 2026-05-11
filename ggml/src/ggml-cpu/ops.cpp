@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <vector>
 
 extern "C" int turbo3_cpu_wht_group_size;
 

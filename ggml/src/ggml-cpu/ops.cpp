@@ -11327,8 +11327,92 @@ void ggml_compute_forward_opt_step_sgd(const ggml_compute_params * params, ggml_
     }
 }
 
+static void ggml_compute_forward_pflash_bsa_attn_chunk(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * q = dst->src[0];
+    const ggml_tensor * k = dst->src[1];
+    const ggml_tensor * v = dst->src[2];
+    const ggml_tensor * block_mask = dst->src[3];
+
+    GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nek, k,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbk, k,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nev, v,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbv, v,   nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst, nb)
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t D   = neq0;
+    const int64_t N   = neq1;
+    const int64_t NQH = neq2;
+    const int64_t NKH = nek2;
+    const int64_t NK  = nek1;
+
+    GGML_ASSERT(D == ne0);
+    GGML_ASSERT(N == ne2);
+    GGML_ASSERT(NQH == ne1);
+    GGML_ASSERT(nbq0 == sizeof(float));
+    GGML_ASSERT(nbk0 == sizeof(float));
+    GGML_ASSERT(nbv0 == sizeof(float));
+
+    float scale;
+    memcpy(&scale, dst->op_params, sizeof(float));
+    int32_t n_selected = (int32_t)ggml_get_op_params_f32(dst, 1);
+
+    const int32_t * masks = (const int32_t *)block_mask->data;
+
+    for (int64_t qi = 0; qi < N; qi++) {
+        for (int64_t h = 0; h < NQH; h++) {
+            if ((qi * NQH + h) % nth != ith) continue;
+
+            const int64_t h_kv = h * NKH / NQH;
+            const float * Q_row = (const float *)((const char *)q->data + qi * nbq1 + h * nbq2);
+            float * O_row = (float *)((char *)dst->data + h * nb1 + qi * nb2);
+
+            float m_i = -INFINITY;
+            float l_i = 0.0f;
+            std::vector<float> acc((size_t)D, 0.0f);
+
+            for (int32_t bi = 0; bi < n_selected; bi++) {
+                const int64_t kv_block = masks[bi];
+                const int64_t k_start  = kv_block * 128;
+                const int64_t k_end    = std::min(k_start + 128, NK);
+
+                for (int64_t ki = k_start; ki < k_end; ki++) {
+                    if (ki > qi) break;
+
+                    const float * K_row = (const float *)((const char *)k->data + ki * nbk1 + h_kv * nbk2);
+                    const float * V_row = (const float *)((const char *)v->data + ki * nbv1 + h_kv * nbv2);
+
+                    float s = 0.0f;
+                    for (int64_t d = 0; d < D; d++) {
+                        s += Q_row[d] * K_row[d];
+                    }
+                    s *= scale;
+
+                    float m_old = m_i;
+                    float m_new = fmaxf(m_old, s);
+                    float exp_scale = expf(m_old - m_new);
+                    float p = expf(s - m_new);
+
+                    l_i = l_i * exp_scale + p;
+                    m_i = m_new;
+
+                    for (int64_t d = 0; d < D; d++) acc[d] = acc[d] * exp_scale + p * V_row[d];
+                }
+            }
+
+            float inv_l = 1.0f / fmaxf(l_i, 1e-12f);
+            for (int64_t d = 0; d < D; d++) O_row[d] = acc[d] * inv_l;
+        }
+    }
+}
+
 void ggml_compute_forward_pflash_bsa_attn(const ggml_compute_params * params, ggml_tensor * dst) {
-    GGML_UNUSED(params);
-    GGML_UNUSED(dst);
-    GGML_ABORT("PFLASH_BSA_ATTN requires GPU backend");
+    ggml_compute_forward_pflash_bsa_attn_chunk(params, dst);
 }

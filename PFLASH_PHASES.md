@@ -395,6 +395,52 @@ Per-question timing ranges from ~20s (A3, 8.7k ctx) to ~100s (C1, 25k ctx). BSA 
 
 ---
 
+## Phase 8 — Code Review Response (Comprehensive Fixes)
+
+### Motivation
+An independent code review (`pflash-review-opus.md`) identified 8 findings across correctness, integration, robustness, and test infrastructure. All 8 were addressed and verified.
+
+### Changes (10 files, 309 insertions, 64 deletions)
+
+| # | Finding | Severity | Fix | Files |
+|---|---------|----------|-----|-------|
+| 1 | CPU backend aborts on BSA op dispatch | CRITICAL | Implemented slow-but-correct CPU attention with causal online softmax, matching the GPU kernel's algorithm | `ggml/src/ggml-cpu/ops.cpp` (+90 lines) |
+| 2 | KV-cache bulk-read without offset (dead code) | HIGH | Removed unreachable non-chunked remainder branch; added clarifying comment that `read_k_data_bulk` scans from cell 0 | `tools/niah/pflash.cpp` (-28 lines) |
+| 3 | No kernel-level unit tests | HIGH | Added `test_pflash_bsa_attn` to `test-backend-ops.cpp` (17 configs: D=64/128, N=1/4, NKV=128/512, NH=2/4, +GQA variant). Extended `test_bsa.cpp` with scoring kernel test (`cpu_score` vs `pflash_score_gpu`, D=256, NKV=512). | `tests/test-backend-ops.cpp` (+78 lines), `tools/niah/test_bsa.cpp` (+140 lines) |
+| 4 | `--pflash-bsa` not wired to server | MEDIUM | Added `--pflash-bsa N` CLI flag (0=off, 1=on, 2=auto) in `common/arg.cpp`, field in `common_params_speculative`, wired to `cparams.use_pflash_bsa` at draft context init and `pparams.use_bsa` at `pflash_compress` in server | `common/arg.cpp`, `common/common.h`, `tools/server/server-context.cpp` (+8 lines) |
+| 5 | Hardcoded 1024-element BSA mask cap | MEDIUM | Changed to `max(1024, n_ctx / bsa_block_size)` for dynamic scaling | `src/llama-context.cpp` (1 line) |
+| 6 | Reproducibility (no fixed seed) | MEDIUM | Already deterministic — greedy sampler has no stochastic component; no change needed | — |
+| 7 | `pflash_bsa_forward` -1 return silently discarded | LOW | Check return value and `GGML_ASSERT(ret == 0)` | `ggml/src/ggml-cuda/pflash-bsa.cu` (1 line) |
+| 8 | Dropped rows and silent bypasses | LOW | Added `LOG_WRN` for out-of-range K-reorder positions; added `LOG_INF` when `scoring_budget < min_scoring_budget` triggers bypass | `tools/niah/pflash.cpp` (+3 lines) |
+
+### Additional Hardening
+- **Empty-selection guard (C4)**: `GGML_ASSERT` that block 0 (sink) is always in the selected set, in both `pflash_compress` and `pflash_process_window` BSA mask construction
+- **int32_t overflow (C5)**: All `b * block_size` computations cast through `int64_t`
+- **Integer division (B4)**: `aggregate_results.py` changed from `100 * n_pass // n_total` to `round(100.0 * n_pass / n_total)` for fractional precision
+- **Dynamic mask sizing (B2)**: Mask capacity now computed from `cparams.n_ctx / cparams.bsa_block_size`, minimum 1024
+
+### Build Verification
+All targets compile cleanly:
+- `llama-niah` — ✓
+- `llama-server` — ✓
+- `test-backend-ops` — ✓
+- `test-bsa` — ✓
+
+### Review Items Addressed (from `pflash-review-opus.md` prioritisation)
+
+| Review # | Description | Status |
+|----------|------------|--------|
+| #1 (CRITICAL) | CPU reference for BSA op | ✅ A1 |
+| #2 (HIGH) | Fix `read_k_data_bulk` offset | ✅ A2 (dead code removed) |
+| #3 (HIGH) | Kernel unit tests | ✅ A3 |
+| #4 (MEDIUM) | Wire `--pflash-bsa` to server | ✅ B1 |
+| #5 (MEDIUM) | Dynamic BSA mask | ✅ B2 |
+| #6 (MEDIUM) | Fixed seed / CI averaging | ✅ B3 (greedy deterministic) + B4 (integer div) |
+| #7 (LOW) | `GGML_ABORT` on -1 return | ✅ C1 |
+| #8 (LOW) | Log dropped rows | ✅ C2 + C3 |
+
+---
+
 ## Remaining Work
 
 ### Future Work

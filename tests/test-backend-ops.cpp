@@ -6556,6 +6556,70 @@ struct test_tri : public test_case {
     }
 };
 
+// GGML_OP_PFLASH_BSA_ATTN
+struct test_pflash_bsa_attn : public test_case {
+    const int64_t D;     // head dim
+    const int64_t N;     // query tokens
+    const int64_t NKV;   // KV tokens
+    const int64_t NH;    // num heads
+    const int64_t NKH;   // num KV heads
+
+    std::string vars() override {
+        return VARS_TO_STR5(D, N, NKV, NH, NKH);
+    }
+
+    double max_nmse_err() override {
+        return 5e-4;
+    }
+
+    test_pflash_bsa_attn(int64_t D = 128, int64_t N = 4, int64_t NKV = 256,
+                         int64_t NH = 4, int64_t NKH = 4)
+        : D(D), N(N), NKV(NKV), NH(NH), NKH(NKH) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        const int64_t ne_q[4] = {D, N, NH, 1};
+        const int64_t ne_kv[4] = {D, NKV, NKH, 1};
+        const int block_size = 128;
+        const int n_blocks = (NKV + block_size - 1) / block_size;
+
+        ggml_tensor * q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ne_q[0], ne_q[1], ne_q[2], ne_q[3]);
+        ggml_set_name(q, "q");
+
+        ggml_tensor * k = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ne_kv[0], ne_kv[1], ne_kv[2], ne_kv[3]);
+        ggml_set_name(k, "k");
+
+        ggml_tensor * v = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ne_kv[0], ne_kv[1], ne_kv[2], ne_kv[3]);
+        ggml_set_name(v, "v");
+
+        int64_t ne_mask[1] = {n_blocks};
+        ggml_tensor * block_mask = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, ne_mask[0]);
+        ggml_set_name(block_mask, "block_mask");
+
+        float scale = 1.0f / sqrtf((float)D);
+        ggml_tensor * out = ggml_pflash_bsa_attn(ctx, q, k, v, block_mask, scale, n_blocks);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        ggml_tensor * block_mask = nullptr;
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->type == GGML_TYPE_F32) {
+                init_tensor_uniform(t, -1.0f, 1.0f);
+            } else if (t->type == GGML_TYPE_I32 && t->ne[0] > 1) {
+                block_mask = t;
+            }
+        }
+        if (block_mask) {
+            int32_t * data = (int32_t *)block_mask->data;
+            for (int64_t i = 0; i < block_mask->ne[0]; i++) {
+                data[i] = (int32_t)i;
+            }
+        }
+    }
+};
+
 // GGML_OP_FILL
 struct test_fill : public test_case {
     const ggml_type              type;
@@ -8633,6 +8697,20 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             }
         }
     }
+
+    // PFlash BSA attention tests
+    for (int64_t D : {64, 128}) {
+        for (int64_t N : {1, 4}) {
+            for (int64_t NKV : {128, 512}) {
+                for (int64_t NH : {2, 4}) {
+                    int64_t NKH = NH;
+                    test_cases.emplace_back(new test_pflash_bsa_attn(D, N, NKV, NH, NKH));
+                }
+            }
+        }
+    }
+    // GQA variant: 4 heads, 2 KV heads
+    test_cases.emplace_back(new test_pflash_bsa_attn(128, 4, 256, 4, 2));
 
     test_cases.emplace_back(new test_cross_entropy_loss     (GGML_TYPE_F32, {   10, 5, 4, 3}));
     test_cases.emplace_back(new test_cross_entropy_loss     (GGML_TYPE_F32, {30000, 1, 1, 1}));

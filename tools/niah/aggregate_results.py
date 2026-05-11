@@ -61,7 +61,7 @@ def main():
         mode_kr_results = [x for x in results if x.get("mode")==mode and x.get("kr")==kr]
         n_total = len(mode_kr_results)
         n_pass  = sum(1 for x in mode_kr_results if x.get("pass"))
-        pct     = 100 * n_pass // n_total if n_total else 0
+        pct     = round(100.0 * n_pass / n_total) if n_total else 0
         types   = []
         for t in "ABCDE":
             p, tot = cell.get((mode, kr, t), [0, 0])

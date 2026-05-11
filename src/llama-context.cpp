@@ -174,7 +174,8 @@ llama_context::llama_context(
         bsa_params.mem_size = ggml_tensor_overhead();
         bsa_params.no_alloc = true;
         bsa_mask_ctx.reset(ggml_init(bsa_params));
-        bsa_block_mask = ggml_new_tensor_1d(bsa_mask_ctx.get(), GGML_TYPE_I32, 1024);
+        int32_t mask_size = std::max(1024, (int32_t)(cparams.n_ctx / cparams.bsa_block_size));
+        bsa_block_mask = ggml_new_tensor_1d(bsa_mask_ctx.get(), GGML_TYPE_I32, mask_size);
 
         for (auto & backend : backends) {
             auto dev_type = ggml_backend_dev_type(ggml_backend_get_device(backend.get()));

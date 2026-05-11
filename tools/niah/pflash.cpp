@@ -104,6 +104,7 @@ static bool pflash_process_window(
             }
         }
 
+        GGML_ASSERT(std::find(selected_blocks.begin(), selected_blocks.end(), 0) != selected_blocks.end());
         llama_set_pflash_bsa_mask(draft_ctx, selected_blocks.data(), (int32_t)selected_blocks.size());
     }
 
@@ -203,8 +204,7 @@ std::vector<pflash_span> pflash_select(
     int32_t n_blocks = (int32_t)scores.size();
     std::vector<std::pair<int32_t, float>> ranked;
     for (int32_t b = 0; b < n_blocks; b++) {
-        // Skip blocks that are fully covered by anchors
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         bool fully_covered = false;
@@ -233,7 +233,7 @@ std::vector<pflash_span> pflash_select(
         if (middle_kept >= middle_budget) break;
 
         int32_t b = r.first;
-        int32_t b_start = b * block_size;
+        int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
         // Compute incremental tokens (not covered by existing spans)
@@ -346,6 +346,7 @@ pflash_result pflash_compress(
     int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
     int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
     if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
+        LOG_INF("pflash: bypassed — scoring_budget=%d < min_scoring_budget=%d", scoring_budget, params.min_scoring_budget);
         res.bypassed = true;
         res.tokens = tokens;
         return res;
@@ -368,6 +369,9 @@ pflash_result pflash_compress(
         for (int b = 0; b < sink_end; b++) selected.push_back(b);
         int local_start = std::max(sink_end, n_blocks - n_local_b);
         for (int b = local_start; b < n_blocks; b++) selected.push_back(b);
+        // Defensive: verify block 0 (sink) is always in the selected set
+        // n_sink_b >= 1 guarantees this, but assert explicitly for future refactoring safety
+        GGML_ASSERT(std::find(selected.begin(), selected.end(), 0) != selected.end());
         llama_set_pflash_bsa_mask(draft_ctx, selected.data(), (int32_t)selected.size());
     }
 
@@ -426,6 +430,8 @@ pflash_result pflash_compress(
                 int32_t pos = positions[i];
                 if (pos >= 0 && pos < probe_n) {
                     memcpy(&temp[(size_t)pos * kv_dim], &all_k[(size_t)i * kv_dim], (size_t)kv_dim * sizeof(float));
+                } else {
+                    LOG_WRN("pflash: K-reorder row %d has unexpected position %d (expected [0, %d)) — row dropped", i, pos, probe_n);
                 }
             }
             memcpy(all_k.data(), temp.data(), (size_t)probe_n * kv_dim * sizeof(float));
@@ -442,32 +448,12 @@ pflash_result pflash_compress(
                 res.bypassed = true; res.tokens = tokens; return res;
             }
         }
-    } else if (n_tokens > probe_n) {
-        // Full prompt without chunking: bulk read remaining positions
-        std::vector<int32_t> positions(n_tokens - probe_n);
-        int32_t n_read = llama_kv_cache_read_k_bulk(draft_ctx, score_layer, 0, &all_k[(size_t)probe_n * kv_dim], positions.data(), n_tokens - probe_n);
-        if (n_read != n_tokens - probe_n) {
-            LOG_ERR("pflash: bulk K cache read failed (got %d, expected %d)", n_read, n_tokens - probe_n);
-            res.bypassed = true; res.tokens = tokens; return res;
-        }
-        // Sort by position for remaining rows
-        bool sorted = true;
-        int32_t n_rem = n_tokens - probe_n;
-        for (int32_t i = 1; i < n_rem; i++) {
-            if (positions[i] < positions[i - 1]) { sorted = false; break; }
-        }
-        if (!sorted) {
-            std::vector<float> temp((size_t)n_rem * kv_dim);
-            int32_t base = probe_n;
-            for (int32_t i = 0; i < n_rem; i++) {
-                int32_t pos = positions[i];
-                if (pos >= 0 && pos < n_rem) {
-                    memcpy(&temp[(size_t)pos * kv_dim], &all_k[(size_t)(base + i) * kv_dim], (size_t)kv_dim * sizeof(float));
-                }
-            }
-            memcpy(&all_k[(size_t)base * kv_dim], temp.data(), (size_t)n_rem * kv_dim * sizeof(float));
-        }
     }
+    // Non-chunked path: probe_n == n_tokens in this mode (win == n_tokens),
+    // so all K data was already read above. No remainder branch needed.
+    // Note: read_k_data_bulk always scans from cell 0 (no offset parameter),
+    // so a second call would return duplicate rows, not [probe_n..n_tokens).
+    // The single-bulk-read design avoids this by construction.
     res.draft_us = ggml_time_us() - t0;
 
     // Step 5: Score blocks (GPU when available and non-chunked; CPU fallback otherwise)
@@ -503,7 +489,7 @@ pflash_result pflash_compress(
 
         std::vector<double> mean_k_buf(kv_dim);
         for (int32_t b = 0; b < n_blocks; b++) {
-            int32_t start = b * params.block_size;
+            int32_t start = (int32_t)((int64_t)b * params.block_size);
             int32_t end = std::min(start + params.block_size, n_tokens);
             std::fill(mean_k_buf.begin(), mean_k_buf.end(), 0.0);
             for (int32_t p = start; p < end; p++) {

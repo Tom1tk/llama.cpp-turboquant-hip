@@ -3659,6 +3659,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_BSA_AUTO"));
     add_opt(common_arg(
+        {"--pflash-bsa"}, "N",
+        "BSA mode (0=off, 1=on, 2=auto; default: 0). When on, replaces chunked window with single-pass BSA. When auto, uses BSA for n_tokens <= --pflash-bsa-auto.",
+        [](common_params & params, int value) {
+            params.speculative.pflash_bsa = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_BSA"));
+    add_opt(common_arg(
         {"--pflash-keep-auto"},
         "adaptive keep ratio by context size (0.80 <25k, 0.70 <64k, 0.65 >=64k)",
         [](common_params & params) {

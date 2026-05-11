@@ -718,6 +718,7 @@ private:
                 cparams.offload_kqv = (pspec.pflash_draft_gpu_layers != 0);
                 cparams.type_k = pspec.cache_type_k;
                 cparams.type_v = pspec.cache_type_v;
+                cparams.use_pflash_bsa = (pspec.pflash_bsa > 0);
 
                 // Use the draft model already loaded, or load from path
                 llama_model * draft_model = model_dft.get();
@@ -2270,6 +2271,11 @@ private:
                             pparams.bsa_auto_threshold = params_base.speculative.pflash_bsa_auto_threshold;
                             pparams.keep_ratio_auto    = params_base.speculative.pflash_keep_ratio_auto;
                             pparams.min_scoring_budget = params_base.speculative.pflash_min_scoring_budget;
+                            {
+                                int bsa_mode = params_base.speculative.pflash_bsa;
+                                pparams.use_bsa = (bsa_mode == 1) ||
+                                    (bsa_mode == 2 && (int32_t)input_tokens.size() <= params_base.speculative.pflash_bsa_auto_threshold);
+                            }
 
                             auto pfr = pflash_compress(ctx_pflash_draft, raw_tokens, pparams);
                             if (!pfr.bypassed && !pfr.tokens.empty()) {

@@ -188,12 +188,13 @@ void ggml_cuda_pflash_bsa_attn(ggml_backend_cuda_context & ctx, ggml_tensor * ds
     const int kv_stride      = k->nb[1] / sizeof(float);
     const int kv_head_stride = k->nb[2] / sizeof(float);
 
-    pflash_bsa_forward(
+    int32_t ret = pflash_bsa_forward(
         (const float*)q->data, (const float*)k->data, (const float*)v->data,
         (const int*)block_mask->data, n_selected,
         (float*)dst->data, scale, n_heads, n_heads_kv, n_q, n_kv, head_dim,
         q_stride, q_head_stride, o_stride, o_head_stride, kv_stride, kv_head_stride);
 
+    GGML_ASSERT(ret == 0 && "PFLASH_BSA_ATTN: kernel launch failed (unsupported head_dim?)");
     GGML_ASSERT(hipGetLastError() == hipSuccess);
 }
 

@@ -705,7 +705,11 @@ struct common_speculative_state_mtp : public common_speculative_state {
                     // the last prefill ubatch; its last row is h_{N-1}.
                     src_row = (src && src->ne[1] > 0) ? (int32_t) src->ne[1] - 1 : 0;
                 } else {
-                    src_row = last_n_accepted;
+                    // last_n_accepted may exceed tensor rows when the target
+                    // prefill was compressed (e.g., by PFlash) and fewer rows exist
+                    // than the original prompt had. Clamp to safe bounds.
+                    src_row = (int32_t) std::min((size_t) last_n_accepted,
+                        src ? (size_t)(src->ne[1] - 1) : (size_t) 0);
                 }
                 llama_synchronize(ctx_tgt);
             } else {
@@ -716,6 +720,13 @@ struct common_speculative_state_mtp : public common_speculative_state {
             }
             if (!src) {
                 LOG_WRN("%s: missing source tensor at k=%d; stopping chain\n", __func__, k);
+                return;
+            }
+            if (src_row < 0 || (size_t)(src_row + 1) * row_bytes > ggml_nbytes(src)) {
+                LOG_WRN("%s: src_row=%d out of range for tensor ne[1]=%d "
+                        "(target prefill may have been compressed by PFlash); "
+                        "stopping MTP chain\n",
+                        __func__, (int) src_row, (int) src->ne[1]);
                 return;
             }
             ggml_backend_tensor_get(src, batch.embd,

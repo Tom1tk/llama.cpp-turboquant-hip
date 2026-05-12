@@ -800,20 +800,50 @@ The draft model (0.8B) attention proxy does not reliably transfer to the target 
 | Transformer attention | 28.0 tok/s | 45.8 tok/s | **1.64x** | 65.1% |
 | **Average** | **28.0** | **47.6** | **1.70x** | **68.9%** |
 
-MTP PP speed is slightly lower (70-80 vs 79-90 tok/s) due to MTP head overhead on prefill.
+### PP Benchmark (1560-token code prompt, 128-token generation)
 
-### Compatibility
+| Config | PP tok/s | TG tok/s | vs Baseline TG |
+|--------|----------|----------|---------------|
+| Baseline | 683 | 27.8 | — |
+| MTP-only | OOM on large prompt | 39.6–47.7† | 1.70x |
+| PFlash-only | 691 | 26.8 | 0.96x |
+| MTP+PFlash | OOM on large prompt | 21.0–36.4† | 0.76–1.31x† |
 
-| Combination | Status |
-|-------------|--------|
-| MTP alone | Works (1.60-1.85x speedup) |
-| PFlash alone with MTP model | Works (A1 BSA mid PASS confirmed) |
-| MTP + PFlash combined | **CRASH**: `tensor read out of bounds` in `common_speculative_state_mtp::draft` |
-| NIAH baseline (5Q × 3 pos) | 15/15 PASS (100%) with MTP model |
+† Measured with small prompts (8–12 tokens) where PFlash is bypassed.
 
-MTP+PFlash crash analysis:
-- PFlash compresses prompt → reduces KV cache token count
-- MTP draft head reads target model KV cache tensors
-- After PFlash compression, KV cache layout may not match MTP head expectations
-- Stack: `common_speculative_state_mtp::draft()` → `ggml_backend_tensor_get()` out-of-bounds
-- Likely needs PFlash to rebuild MTP head state after prompt compression
+### Why MTP+PFlash Gives "Worst of Both Worlds"
+
+**VRAM is the binding constraint.** The 24 GB RX 7900 XTX must hold:
+
+| Component | Size |
+|-----------|------|
+| Target model (27B Q4_K_XL) | 16.4 GB |
+| Target KV cache (turbo3, 4096 ctx) | ~1.5 GB |
+| MTP ctx KV cache (f16, 4096 ctx) | ~300 MB |
+| PFlash draft model (0.8B Q8_0) | 800 MB |
+| PFlash draft KV cache (f32, 4096 ctx) | ~200 MB |
+| Compute buffers (target prefill) | ~500 MB |
+| Compute buffers (MTP hook) | ~300 MB |
+| **Total** | **~20.0 GB** (of 24 GB available) |
+
+1. **MTP-only** works because there's no PFlash draft model — VRAM headroom is ~4 GB.
+2. **PFlash-only** works because there's no MTP ctx competing for compute buffers.
+3. **MTP+PFlash combined** hits two bottlenecks:
+   - **Small prompts**: PFlash is bypassed (threshold=8192 tokens), but the draft model still consumes 800 MB. MTP ctx's extra compute buffers during prefill trigger OOM on large prompts. On small prompts that fit, both speculative paths compete for memory bandwidth, dropping TG from 40–47 (MTP-only) to 21–36 tok/s.
+   - **Large prompts**: `handle_mtp_for_ubatch` fires during target prefill, calling `llama_decode(ctx_mtp)` which needs additional compute buffers. With PFlash draft model already loaded, combined compute buffer demand exceeds VRAM → `ggml_cuda_pool_leg::alloc` fails → crash.
+
+**The two speculative systems are independent and don't combine synergistically.** MTP accelerates decode (TG), PFlash accelerates prefill (PP). But they compete for the same VRAM and the overhead of running both cancels their individual gains. On 24 GB, they're mutually exclusive at meaningful context sizes.
+
+### Fix Applied (commit `17b983f4c`)
+
+`common/speculative.cpp`: Clamp `src_row` to `min(last_n_accepted, ne[1]-1)` in MTP draft when reading `t_h_pre_norm`, plus defensive bounds check. Prevents crash when tensor has fewer rows than expected (post-PFlash KV cache). Fix is minimal — only activates when bounds would be violated.
+
+### Verified Configurations
+
+| Config | Status | TG | PP | Notes |
+|--------|--------|-----|-----|-------|
+| MTP only | Pass | 40–47 tok/s (1.70x) | 70–80 tok/s | 0 crashes, 4/4 draft rounds |
+| PFlash only | Pass | 27–28 tok/s | 683–691 tok/s | BSA/windowed both work, NIAH A1 PASS |
+| MTP+PFlash (small prompt) | Pass | 21–36 tok/s | — | 0 crashes, 4/4 draft rounds |
+| MTP+PFlash (large prompt) | OOM | — | — | VRAM: `ggml_cuda_pool_leg::alloc` during hook |
+| NIAH baseline (5Q × 3pos) | Pass | — | — | 15/15 PASS (100%) with MTP model |

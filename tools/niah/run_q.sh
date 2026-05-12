@@ -6,6 +6,7 @@
 #
 # Arguments: <question_id> <mode:windowed|bsa|baseline> <kr> <position:early|mid|late> <run_idx>
 # Output:    tools/niah/results/<id>_<mode>_<kr>_pos-<pos>_r<run>.json
+#            (+ optional PHASE7_METHOD_SUFFIX if set, e.g. _obs-attn)
 # Resume:    if result file exists, skip immediately (exit 0)
 
 set -euo pipefail
@@ -27,7 +28,7 @@ DRAFT="/root/Qwen3.5-0.8B-Q8_0.gguf"
 
 FIXTURE="tools/niah/fixtures/${QID}_pos-${POS}.jsonl"
 RESULTS_DIR="tools/niah/results"
-RESULT_FILE="${RESULTS_DIR}/${QID}_${MODE}_${KR}_pos-${POS}_r${RUN}.json"
+RESULT_FILE="${RESULTS_DIR}/${QID}_${MODE}_${KR}_pos-${POS}_r${RUN}${PHASE7_METHOD_SUFFIX:-}.json"
 
 mkdir -p "$RESULTS_DIR"
 

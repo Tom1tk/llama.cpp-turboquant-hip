@@ -22,6 +22,9 @@ warn() { printf "${YEL}[phase11-%s] WARN${NC} %s\n" "$CHUNK" "$*"; }
 run_tier() {
     # Pass through extra pflash flags via existing env-var mechanism
     export PHASE7_PFLASH_EXTRA="${PFLASH_EXTRA:-}"
+    # Encode scoring method in result filename to avoid cross-method cache collision
+    # (different methods produce different results for same (qid, mode, kr, pos))
+    export PHASE7_METHOD_SUFFIX="${METHOD_SUFFIX:-}"
     # Reduce max-gen to speed up sweep (most answers are <100 tokens)
     export PHASE7_MAXGEN="${PHASE7_MAXGEN:-512}"
     # Longer timeout for slow questions
@@ -43,15 +46,18 @@ case "$CHUNK" in
     # BSA mid, centraliy, adaptive anchors on, debug scores
     log "--- BSA mid, centrality, adaptive anchors ---"
     PFLASH_EXTRA="--pflash-score-method centrality --pflash-adaptive-anchors --pflash-debug-scores"
+    METHOD_SUFFIX="_centrality"
     run_tier --questions A2,A4,A5 --mode bsa --kr 0.65 --positions mid
 
     # BSA mid, obs-attn, adaptive anchors on, debug scores
     log "--- BSA mid, obs-attn, adaptive anchors ---"
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-adaptive-anchors --pflash-debug-scores"
+    METHOD_SUFFIX="_obs-attn"
     run_tier --questions A2,A4,A5 --mode bsa --kr 0.65 --positions mid
 
     # Baseline (no compression)
     log "--- Baseline (no PFlash) ---"
+    METHOD_SUFFIX=""
     run_tier --questions A2,A4,A5 --mode baseline --kr 1.00 --positions mid
     ;;
 
@@ -64,6 +70,7 @@ case "$CHUNK" in
 # └──────────────────────────────────────────────────────────────────────┘
     log "=== Chunk 2: P1 core — BSA mid obs-attn, fast+medium tier (17 questions) ==="
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_obs-attn"
     run_tier --questions A1,A2,A3,A4,A5,B2,B3,B4,B5,B6,C3,D1a,D1b,E1,E2,E3,E4 \
              --mode bsa --kr 0.65 --positions mid
     ;;
@@ -80,12 +87,14 @@ case "$CHUNK" in
     # Slow tier obs-attn
     log "--- Slow tier obs-attn ---"
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_obs-attn"
     run_tier --questions B1,C1,C2,D2a,D2b \
              --mode bsa --kr 0.65 --positions mid
 
     # Full mid centrality baseline (Phase 10 comparison)
     log "--- All mid BSA centrality (Phase 10 A/B baseline) ---"
     PFLASH_EXTRA="--pflash-score-method centrality --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_centrality"
     run_tier --tier all --mode bsa --kr 0.65 --positions mid
     ;;
 
@@ -96,6 +105,7 @@ case "$CHUNK" in
 # └──────────────────────────────────────────────────────────────────────┘
     log "=== Chunk 4: BSA early obs-attn — regression check ==="
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_obs-attn_early"
     run_tier --tier all --mode bsa --kr 0.65 --positions early
     ;;
 
@@ -110,12 +120,14 @@ case "$CHUNK" in
     # Late regression
     log "--- BSA late obs-attn ---"
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_obs-attn_late"
     run_tier --tier all --mode bsa --kr 0.65 --positions late
 
     # Windowed mid sanity
     log "--- Windowed mid obs-attn ---"
     PHASE7_MAXGEN=512
     PFLASH_EXTRA="--pflash-score-method obs-attn --pflash-coverage-zones 4"
+    METHOD_SUFFIX="_obs-attn_windowed"
     run_tier --tier all --mode windowed --kr 0.65 --positions mid
     ;;
 

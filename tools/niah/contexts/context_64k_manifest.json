@@ -1,0 +1,48 @@
+{
+  "total_tokens_approx": 67042,
+  "total_chars": 268176,
+  "files": [
+    {
+      "path": "ggml/include/ggml.h",
+      "token_start_approx": 0,
+      "token_end_approx": 27238,
+      "position_frac": 0.0,
+      "position_bucket": "early"
+    },
+    {
+      "path": "tools/niah/gen_code_fixtures.py",
+      "token_start_approx": 27238,
+      "token_end_approx": 27997,
+      "position_frac": 0.406,
+      "position_bucket": "mid"
+    },
+    {
+      "path": "ggml/src/ggml-cuda/pflash-bsa.cu",
+      "token_start_approx": 27997,
+      "token_end_approx": 29710,
+      "position_frac": 0.418,
+      "position_bucket": "mid"
+    },
+    {
+      "path": "tools/niah/questions.yaml",
+      "token_start_approx": 29710,
+      "token_end_approx": 32270,
+      "position_frac": 0.443,
+      "position_bucket": "mid"
+    },
+    {
+      "path": "ggml/src/ggml-cuda/pflash-score.cu",
+      "token_start_approx": 32270,
+      "token_end_approx": 33373,
+      "position_frac": 0.481,
+      "position_bucket": "mid"
+    },
+    {
+      "path": "tools/server/server-context.cpp",
+      "token_start_approx": 33373,
+      "token_end_approx": 67042,
+      "position_frac": 0.498,
+      "position_bucket": "mid"
+    }
+  ]
+}

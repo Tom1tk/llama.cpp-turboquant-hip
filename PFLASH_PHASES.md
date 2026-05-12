@@ -560,27 +560,72 @@ All 6 files updated:
 - `--pflash-coverage-zones N` — divide middle context into N equal zones (0=off, recommended: 4)
 - `--pflash-min-blocks-per-file N` — keep ≥N blocks per `// ===== FILE:` segment (0=off, recommended: 1)
 
-### 10D: Quality Status (After Fixture Fixes)
+### 10D: Quality Status (Complete)
 
-| Metric | Before Phase 10 (Old) | After Fixes | Plan Target | Status |
-|--------|----------------------|-------------|-------------|--------|
-| Baseline total | 57/66 (86%) | **66/66 (100%)** | 66/66 | ✅ |
-| Windowed mid kr=0.65 | 17/22 (77%) | **20/22 (90%)** | ≥19/22 (≥86%) | ✅ |
-| BSA mid kr=0.65 | 15/22 (68%) | *pending* | ≥18/22 (≥82%) | ⏳ |
-| C2 kr=0.55 windowed | FAIL | **PASS** | PASS | ✅ |
+| Metric | Before Phase 10 | After Fixes | Phase 10 Result | Plan Target | Status |
+|--------|----------------|-------------|-----------------|-------------|--------|
+| Baseline total | 57/66 (86%) | 66/66 (100%) | **66/66 (100%)** | 66/66 | ✅ |
+| Windowed mid kr=0.65 | 17/22 (77%) | 20/22 (90%) | **20/22 (90%)** | ≥19/22 (≥86%) | ✅ |
+| BSA mid kr=0.65 zones=4 | 15/22 (68%) † | — | **13/22 (59%)** | ≥18/22 (≥82%) | ❌ |
+| BSA mid kr=0.55 zones=4 | 10/18 (56%) † | — | **13/22 (59%)** | — | — |
+| C2 kr=0.55 windowed | FAIL | PASS | **PASS** | PASS | ✅ |
 
-Windowed mid failures are A2 and A5 (small-context Type A lookups where anchors consume the budget — 3 middle blocks available, zones can't help).
+† Old results predate fixture fixes — not comparable. BSA single-pass has a fundamental mid-position quality ceiling that coverage zones alone cannot fully overcome.
 
-### 10E: Builds Verified
+Windowed mid failures are A2 and A5 (small-context Type A lookups where anchors consume the budget — 3 middle blocks available).
+
+**BSA mid failure analysis (kr=0.65, zones=4):**
+
+| Question | BSA mid | Windowed mid | Root Cause |
+|----------|---------|-------------|------------|
+| A2, A5 | FAIL | FAIL | Small contexts (<10k tokens), anchors consume budget, zones can't help |
+| A4 | FAIL | PASS | Enum lookup in ggml.h — BSA can't recover mid-context fine detail |
+| B1 | FAIL | PASS | `set_pflash_bsa_mask` implementation — multi-step logic requires more context |
+| B2 | PASS¹ | PASS | Struct field lookup — rescued by zones at kr=0.55 |
+| C2 | PASS¹ | PASS | Call-chain trace — requires kr≥0.55 with zones |
+| D1a, D2a | FAIL | PASS | Repo-search questions — single-pass BSA misses cross-file context |
+| E2 | FAIL | PASS | Code review — logical inconsistency detection needs full context |
+| B4 | PASS | PASS | `build_attn_mha` conditions — **rescued by coverage zones** |
+| B6 | PASS | PASS | Design rationale — **rescued by question rewrite + zones** |
+
+¹ B2 passed at kr=0.55 only; C2 passed at both kr=0.55 and 0.65 (barely at 0.65).
+
+**Zones rescued**: B2 (kr=0.55), B4 (kr=0.65), B6 (question fix), C1 (kr=0.65), C2 (kr=0.55). Net: coverage zones converted 3 borderline failures to passes.
+
+### 10E: kr=0.45 Degradation Sweep
+
+Windowed core tier (15 questions, 3 positions) at kr=0.45 — to map the quality cliff:
+
+| Position | Pass Rate | vs kr=0.65 |
+|----------|-----------|------------|
+| Early | 13/15 (87%) | —12pp from 99% |
+| Mid | 9/15 (60%) | —30pp from 90% |
+| Late | 14/15 (93%) | —7pp from 100% |
+| **Total** | **36/45 (80%)** | **—16pp from 96%** |
+
+The quality cliff appears between kr=0.50 and kr=0.45 — mid position degrades most severely. Practical floor for windowed mode is kr≥0.50.
+
+**Mid failures at kr=0.45**: A2, A4, A5, B1, D1a, E2 (6/15) — same pattern as BSA mid failures, suggesting these questions fundamentally need more mid-context blocks than kr=0.45 provides.
+
+### 10F: 64k Context Scaling (Simple NIAH)
+
+| Mode | Context | kr | Trials | Result |
+|------|---------|-----|--------|--------|
+| Windowed | 64k | 0.65 | 10/10 | ✅ |
+| BSA | 64k | 0.65 | 10/10 | ✅ |
+
+Simple needle-in-haystack saturates trivially — PFlash pipeline handles 64k without crashes or OOM. Code-based 64k testing requires proper fixture generation infrastructure (not yet built).
+
+### 10G: Builds Verified
 - `llama-niah` ✅
 - `llama-server` ✅
 - No new compiler warnings
 
 ### Remaining Gaps
-- Full BSA mid sweep with coverage zones (serial execution needed due to GPU VRAM — 22 × ~120s each)
-- kr=0.45 sweep to map quality degradation onset
-- 64k–128k context quality data
-- PFlash+MTP combined test (blocked: needs qwen35_mtp model)
+- 64k–128k code-based quality data (needs fixture generation with pack_code_context.py)
+- PFlash+MTP combined test (blocked: needs qwen35_mtp model, current model is qwen35 arch)
+- Multi-trial repeats (r=3–5) for statistical confidence
+- BSA auto-threshold tuning for mid-position workloads (windowed mode recommended for mid-position quality)
 
 ---
 

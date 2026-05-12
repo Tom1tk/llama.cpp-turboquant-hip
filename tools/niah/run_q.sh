@@ -58,6 +58,10 @@ elif [ "$MODE" = "bsa" ]; then
                  --pflash-sink 2048 --pflash-recent 4096 \
                  --pflash-block-size 128 --pflash-layer -1"
 fi
+# Optional extra PFlash args from env (e.g. coverage zones, file-aware)
+if [ -n "${PHASE7_PFLASH_EXTRA:-}" ]; then
+    PFLASH_ARGS="$PFLASH_ARGS $PHASE7_PFLASH_EXTRA"
+fi
 # baseline: no draft, no PFlash args, no chatml (raw prompt, no thinking)
 CHATML_ARGS=""
 

@@ -718,3 +718,65 @@ Simple needle-in-haystack saturates trivially — PFlash pipeline handles 64k wi
 | `aa5c05e57` | Phase 6D: server wiring, min-scoring-budget, 128k fixture |
 | `85b397936` | Phase 7: code test infrastructure (packer, fixtures, questions) |
 | `34b100908` | Phase 6C: multi-trial NIAH sweep, token estimator fix |
+| `7a227c798` | Phase 10: coverage zones + file-aware retention |
+| `b7f3b6341` | Phase 10: BSA mid, kr=0.45 windowed, 64k NIAH, updated docs |
+| `00273fc95` | Phase 11: obs-attn scoring (P1), adaptive anchors (P2), score diagnostics |
+| `d347561b6` | Phase 11: chunked validation runner (5 chunks) |
+| `5f2162983` | Phase 11: fix scoring-method result filename collision |
+
+---
+
+## Phase 11 — Observation-Window Attention Scoring (Partial Results)
+
+### P1 Implementation (completed)
+- `include/pflash.h`: `pflash_score_method` enum (CENTRALITY=0, OBS_ATTN=1); fields `score_method`, `obs_window_tokens` (256), `obs_pool_kernel` (5)
+- `ggml/src/ggml-cuda/pflash-score.cu`: Three new GPU kernels —
+  - `pflash_proxy_q_kernel`: proxy_q = mean(K[n-W:n])
+  - `pflash_attn_score_kernel`: per-token dot(proxy_q, K[i])
+  - `pflash_pool_and_block_max_kernel`: SnapKV 1D max-pool + block-max
+  - Host function `pflash_score_gpu_obs_attn`
+- `tools/niah/pflash.cpp`: CPU fallback mirrors; dispatch on `params.score_method`
+- CLI: `--pflash-score-method {centrality|obs-attn}`, `--pflash-obs-window`, `--pflash-obs-pool`
+
+### P2 Implementation (completed)
+- `tools/niah/pflash.cpp`: Adaptive sink/recent in `pflash_compress`
+  - sink = clamp(0.10 * n_tokens, 512, 2048)
+  - recent = clamp(0.18 * n_tokens, 1024, 4096)
+- CLI: `--pflash-adaptive-anchors`
+
+### Diagnostics (completed)
+- `--pflash-debug-scores`: Score histogram (10 bins), top-5 blocks with zone classification, anchor vs mid score range
+- `tools/niah/score_correlation.py`: Jaccard/Spearman framework (attention-hooking backend: placeholder)
+
+### Validation
+
+#### Chunk 1 — P2 Smoke (3 questions: A2, A4, A5, BSA mid, kr=0.65, adaptive anchors ON)
+
+| QID | Centrality+Adapt | Obs-attn+Adapt | Baseline |
+|-----|-----------------|----------------|----------|
+| A2 (7,218 tok) | PASS | PASS | PASS |
+| A4 (13,432 tok) | FAIL (pre-existing) | FAIL (pre-existing) | PASS |
+| A5 (7,218 tok) | PASS | **FAIL — REGRESSION** | PASS |
+
+**A5 regression root cause**: A5 is 7,218 tokens at kr=0.65 (keep=4,692 tokens).
+- With **fixed anchors** (2,048+4,096=6,144): scoring budget = 4,692 − 6,144 = negative → min_scoring_budget (2,048) bypass → **PFlash bypasses, full context used, passes**.
+- With **adaptive anchors** (721+1,299=2,020): scoring budget = 4,692 − 2,020 = 2,672 → **PFlash activates**, selects blocks via obs-attn, drops question-bearing struct-definition block → **fails**.
+- Centrality at same budget selects the correct block (PASS).
+- Obs-attn from 0.8B draft K does not reliably up-weight fine-grained struct field blocks at 7k context.
+
+**Diagnostic output** — obs-attn score dynamics on A5 (17,254 token prompt, which includes chat template):
+```
+Centrality score range: anchor [0.10..0.68], mid [0.09..0.67]  (tight, cosine)
+Obs-attn score range:   anchor [344..530],   mid [350..476]    (wide, dot-product)
+Top-5 obs-attn blocks:  all in "recent" zone (134, 132, 133, 128, 130)
+```
+Obs-attn correctly separates anchor/mid ranges but top-5 are all recent-zone — tail-attention naturally weights nearby blocks highest. The mid-zone blocks containing the struct definition fall below the selection cutoff.
+
+### Key Finding for P1
+The draft model (0.8B) attention proxy does not reliably transfer to the target model (27B) for small-context fact lookup (Type A). This validates the Plan's §4.3 risk: "The draft model and target may attend differently." The Plan's W3 exit gate (score-correlation Jaccard ≥ 0.5) should be strictly enforced before proceeding with full sweeps.
+
+### Remaining chunks (not yet run)
+- Chunk 2: BSA mid obs-attn fast+medium tier (17 questions, ~8-15 min)
+- Chunk 3: BSA mid obs-attn slow tier + centrality A/B (27 configs, ~10-20 min)
+- Chunk 4: BSA early obs-attn regression (22 questions, ~12-20 min)
+- Chunk 5: BSA late obs-attn + windowed mid sanity (44 configs, ~20-30 min)

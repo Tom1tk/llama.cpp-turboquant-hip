@@ -6,6 +6,11 @@
 #include <string>
 #include <utility>
 
+enum pflash_score_method {
+    PFLASH_SCORE_CENTRALITY = 0,   // legacy: mean-K cosine vs last-K
+    PFLASH_SCORE_OBS_ATTN   = 1,   // new: observation-window attention (SnapKV-style)
+};
+
 struct pflash_params {
     // Path to the draft model (small GGUF)
     std::string draft_model_path;
@@ -67,6 +72,22 @@ struct pflash_params {
     // File-aware retention: guarantee at least N blocks per source file boundary
     // detected via '// ===== FILE:' markers. 0 = disabled.
     int32_t min_blocks_per_file = 0;
+
+    // Scoring method: CENTRALITY (legacy) or OBS_ATTN (SnapKV-style observation window)
+    pflash_score_method score_method = PFLASH_SCORE_CENTRALITY;
+
+    // Observation-window attention scorer: number of tail tokens to use as proxy query
+    int32_t obs_window_tokens = 256;
+
+    // Observation-window attention scorer: max-pool kernel size on per-token attention
+    // before aggregating to block scores (SnapKV pooling trick, default: 5)
+    int32_t obs_pool_kernel = 5;
+
+    // Adaptive anchors: scale sink/recent as fractions of context instead of fixed values
+    bool adaptive_anchors = false;
+
+    // Debug: dump score histogram and mid-zone score range after scoring
+    bool debug_scores = false;
 };
 
 struct pflash_span {

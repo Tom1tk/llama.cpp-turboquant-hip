@@ -2432,6 +2432,12 @@ private:
                             pparams.min_scoring_budget = params_base.speculative.pflash_min_scoring_budget;
                             pparams.coverage_zones      = params_base.speculative.pflash_coverage_zones;
                             pparams.min_blocks_per_file = params_base.speculative.pflash_min_blocks_per_file;
+                            pparams.score_method        = (params_base.speculative.pflash_score_method == "obs-attn")
+                                                           ? PFLASH_SCORE_OBS_ATTN : PFLASH_SCORE_CENTRALITY;
+                            pparams.obs_window_tokens   = params_base.speculative.pflash_obs_window;
+                            pparams.obs_pool_kernel     = params_base.speculative.pflash_obs_pool;
+                            pparams.adaptive_anchors    = params_base.speculative.pflash_adaptive_anchors;
+                            pparams.debug_scores        = params_base.speculative.pflash_debug_scores;
                             {
                                 int bsa_mode = params_base.speculative.pflash_bsa;
                                 pparams.use_bsa = (bsa_mode == 1) ||

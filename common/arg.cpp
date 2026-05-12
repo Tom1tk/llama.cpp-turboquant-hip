@@ -3894,6 +3894,45 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.speculative.pflash_draft_gpu_layers = value;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_DRAFT_GPU_LAYERS"));
+    add_opt(common_arg(
+        {"--pflash-score-method"}, "M",
+        "PFlash scoring method: centrality (legacy) or obs-attn (default: centrality)",
+        [](common_params & params, const std::string & value) {
+            if (value == "obs-attn" || value == "centrality") {
+                params.speculative.pflash_score_method = value;
+            } else {
+                throw std::invalid_argument("unknown score method. expected centrality|obs-attn");
+            }
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_SCORE_METHOD"));
+    add_opt(common_arg(
+        {"--pflash-obs-window"}, "N",
+        "Observation window tokens for obs-attn scorer (default: 256)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_obs_window = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_OBS_WINDOW"));
+    add_opt(common_arg(
+        {"--pflash-obs-pool"}, "N",
+        "SnapKV pooling kernel size for obs-attn scorer (default: 5)",
+        [](common_params & params, int value) {
+            params.speculative.pflash_obs_pool = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_OBS_POOL"));
+    add_opt(common_arg(
+        {"--pflash-adaptive-anchors"},
+        "Scale sink/recent anchors as fraction of context instead of fixed values",
+        [](common_params & params) {
+            params.speculative.pflash_adaptive_anchors = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_ADAPTIVE_ANCHORS"));
+    add_opt(common_arg(
+        {"--pflash-debug-scores"},
+        "Dump score histogram and mid-zone score range after PFlash scoring",
+        [](common_params & params) {
+            params.speculative.pflash_debug_scores = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_DEBUG_SCORES"));
 
     add_opt(common_arg(
         {"-mv", "--model-vocoder"}, "FNAME",

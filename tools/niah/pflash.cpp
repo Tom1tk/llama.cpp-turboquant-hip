@@ -520,7 +520,11 @@ pflash_result pflash_compress(
 
     // Min-scoring-budget guard: skip draft when scoring adds little beyond anchors
     int32_t keep_budget = std::max(params.min_keep_tokens, (int32_t)std::ceil(keep_ratio * n_tokens));
-    int32_t anchor_budget = params.sink_tokens + params.recent_tokens;
+    int32_t guard_sink   = params.adaptive_anchors
+        ? std::min(std::max((int32_t)(0.10f * (float)n_tokens), 512), 2048) : params.sink_tokens;
+    int32_t guard_recent = params.adaptive_anchors
+        ? std::min(std::max((int32_t)(0.18f * (float)n_tokens), 1024), 4096) : params.recent_tokens;
+    int32_t anchor_budget = guard_sink + guard_recent;
     int32_t scoring_budget = keep_budget - std::min(anchor_budget, keep_budget);
     if (params.min_scoring_budget > 0 && scoring_budget < params.min_scoring_budget) {
         LOG_INF("pflash: bypassed — scoring_budget=%d < min_scoring_budget=%d", scoring_budget, params.min_scoring_budget);
@@ -645,11 +649,22 @@ pflash_result pflash_compress(
     if (!use_chunked) {
         struct ggml_tensor * k_tensor = llama_kv_cache_get_k_tensor(draft_ctx, score_layer);
         if (k_tensor && k_tensor->data) {
-            int32_t n_scored = pflash_score_gpu(
-                (const float *)k_tensor->data,
-                n_tokens, kv_dim,
-                params.block_size,
-                scores.data());
+            int32_t n_scored;
+            if (params.score_method == PFLASH_SCORE_OBS_ATTN) {
+                n_scored = pflash_score_gpu_obs_attn(
+                    (const float *)k_tensor->data,
+                    n_tokens, kv_dim,
+                    params.block_size,
+                    params.obs_window_tokens,
+                    params.obs_pool_kernel,
+                    scores.data());
+            } else {
+                n_scored = pflash_score_gpu(
+                    (const float *)k_tensor->data,
+                    n_tokens, kv_dim,
+                    params.block_size,
+                    scores.data());
+            }
             if (n_scored == n_blocks) {
                 scored = true;
             }
@@ -659,6 +674,49 @@ pflash_result pflash_compress(
 
     if (!scored) {
         // CPU fallback: score from all_k buffer
+        if (params.score_method == PFLASH_SCORE_OBS_ATTN) {
+            // CPU obs-attn: proxy_q = mean(all_k[tail window]), then dot(proxy_q, all_k[i]), pool, block-max
+            int obs_start = n_tokens - params.obs_window_tokens;
+            if (obs_start < 0) obs_start = 0;
+            int n_obs = n_tokens - obs_start;
+
+            std::vector<double> proxy_q(kv_dim, 0.0);
+            for (int p = obs_start; p < n_tokens; p++) {
+                const float * kp = &all_k[(size_t)p * kv_dim];
+                for (int d = 0; d < kv_dim; d++) proxy_q[d] += kp[d];
+            }
+            float inv_obs = 1.0f / (float)n_obs;
+            for (int d = 0; d < kv_dim; d++) proxy_q[d] *= inv_obs;
+
+            std::vector<float> tok_scores(n_tokens);
+            for (int p = 0; p < n_tokens; p++) {
+                const float * kp = &all_k[(size_t)p * kv_dim];
+                float dot = 0.0f;
+                for (int d = 0; d < kv_dim; d++) dot += (float)proxy_q[d] * kp[d];
+                tok_scores[p] = dot;
+            }
+
+            int pool_k = params.obs_pool_kernel;
+            int pool_half = pool_k / 2;
+            for (int b = 0; b < n_blocks; b++) {
+                int start = b * params.block_size;
+                int end = std::min(start + params.block_size, n_tokens);
+                float best = -1e30f;
+                for (int p = start; p < end; p++) {
+                    int p0 = p - pool_half;
+                    int p1 = p + pool_half + 1;
+                    if (p0 < 0) p0 = 0;
+                    if (p1 > n_tokens) p1 = n_tokens;
+                    float local_max = -1e30f;
+                    for (int w = p0; w < p1; w++) {
+                        if (tok_scores[w] > local_max) local_max = tok_scores[w];
+                    }
+                    if (local_max > best) best = local_max;
+                }
+                scores[b] = best;
+            }
+        } else {
+            // CPU centrality fallback
         const float * last_k = &all_k[(size_t)(n_tokens - 1) * kv_dim];
         float last_len = 0.0f;
         for (int32_t i = 0; i < kv_dim; i++) last_len += last_k[i] * last_k[i];
@@ -682,8 +740,66 @@ pflash_result pflash_compress(
             }
             scores[b] = dot / (std::sqrt(std::max(ml, 1e-12f)) * last_len);
         }
+        }
     }
     res.score_us = ggml_time_us() - t0;
+
+    // Score-quality probe diagnostic (--pflash-debug-scores)
+    if (params.debug_scores) {
+        std::fprintf(stderr, "PFLASH-DEBUG: n_tokens=%d kr=%.2f score_method=%s\n",
+                n_tokens, keep_ratio,
+                params.score_method == PFLASH_SCORE_OBS_ATTN ? "obs-attn" : "centrality");
+        // Top-5 blocks
+        struct scored_block { int32_t idx; float score; int bucket; };
+        std::vector<scored_block> tmp;
+        tmp.reserve(n_blocks);
+        for (int32_t b = 0; b < n_blocks; b++) {
+            int b_start = b * params.block_size;
+            int b_end = std::min(b_start + params.block_size, n_tokens);
+            int bucket = 2; // mid default
+            if (b_end <= std::min(params.sink_tokens, n_tokens)) bucket = 0; // sink
+            else if (b_start >= std::max(0, n_tokens - params.recent_tokens)) bucket = 1; // recent
+            tmp.push_back({b, scores[b], bucket});
+        }
+        std::sort(tmp.begin(), tmp.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
+        std::fprintf(stderr, "PFLASH-DEBUG: top-5 blocks:\n");
+        for (int k = 0; k < 5 && k < (int)tmp.size(); k++) {
+            const char *bucket_name = tmp[k].bucket == 0 ? "sink" : (tmp[k].bucket == 1 ? "recent" : "mid");
+            std::fprintf(stderr, "  #%d: block=%d score=%.4f zone=%s\n", k+1, tmp[k].idx, tmp[k].score, bucket_name);
+        }
+        // Score histogram (10 bins)
+        if (!scores.empty()) {
+            float s_min = scores[0], s_max = scores[0];
+            for (auto s : scores) { if (s < s_min) s_min = s; if (s > s_max) s_max = s; }
+            int hist[10] = {0};
+            for (auto s : scores) {
+                int bin = (int)((s - s_min) / std::max(s_max - s_min, 1e-9f) * 9.999f);
+                if (bin < 0) bin = 0;
+                if (bin > 9) bin = 9;
+                hist[bin]++;
+            }
+            std::fprintf(stderr, "PFLASH-DEBUG: score histogram [%.4f .. %.4f]:\n", s_min, s_max);
+            for (int b = 0; b < 10; b++) std::fprintf(stderr, "  bin%1d: %4d\n", b, hist[b]);
+        }
+        // Mid-zone score range vs anchor-zone score range
+        float mid_min = 1e9f, mid_max = -1e9f;
+        float anc_min = 1e9f, anc_max = -1e9f;
+        for (int32_t b = 0; b < n_blocks; b++) {
+            int b_start = b * params.block_size;
+            int b_end = std::min(b_start + params.block_size, n_tokens);
+            bool in_sink   = b_end <= std::min(params.sink_tokens, n_tokens);
+            bool in_recent = b_start >= std::max(0, n_tokens - params.recent_tokens);
+            if (in_sink || in_recent) {
+                if (scores[b] < anc_min) anc_min = scores[b];
+                if (scores[b] > anc_max) anc_max = scores[b];
+            } else {
+                if (scores[b] < mid_min) mid_min = scores[b];
+                if (scores[b] > mid_max) mid_max = scores[b];
+            }
+        }
+        std::fprintf(stderr, "PFLASH-DEBUG: anchor-zone score range [%.4f .. %.4f]\n", anc_min, anc_max);
+        std::fprintf(stderr, "PFLASH-DEBUG: mid-zone   score range [%.4f .. %.4f]\n", mid_min, mid_max);
+    }
 
     // Detect file segment block ranges for file-aware retention
     std::vector<std::pair<int32_t,int32_t>> file_block_ranges;
@@ -700,9 +816,20 @@ pflash_result pflash_compress(
 
     // Step 6: Select spans
     t0 = ggml_time_us();
+
+    // Adaptive anchor sizing (P2): scale sink/recent as fractions of context
+    int32_t eff_sink   = params.sink_tokens;
+    int32_t eff_recent = params.recent_tokens;
+    if (params.adaptive_anchors) {
+        eff_sink   = (int32_t)(0.10f * (float)n_tokens);
+        eff_sink   = std::min(std::max(eff_sink, 512), 2048);
+        eff_recent = (int32_t)(0.18f * (float)n_tokens);
+        eff_recent = std::min(std::max(eff_recent, 1024), 4096);
+    }
+
     auto spans = pflash_select(
         scores, params.block_size, n_tokens,
-        params.sink_tokens, params.recent_tokens,
+        eff_sink, eff_recent,
         keep_ratio, params.min_keep_tokens,
         params.coverage_zones,
         file_block_ranges,

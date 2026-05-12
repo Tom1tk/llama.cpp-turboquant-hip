@@ -54,6 +54,11 @@ struct niah_params {
     int32_t pflash_min_scoring_budget = 0;
     int32_t pflash_coverage_zones = 0;
     int32_t pflash_min_blocks_per_file = 0;
+    std::string pflash_score_method = "centrality"; // centrality | obs-attn
+    int32_t pflash_obs_window   = 256;   // observation window tokens
+    int32_t pflash_obs_pool      = 5;     // SnapKV pooling kernel size
+    bool pflash_adaptive_anchors = false; // adaptive sink/recent sizing
+    bool pflash_debug_scores     = false; // dump score histogram
 };
 
 struct niah_fixture {
@@ -124,6 +129,11 @@ static void print_usage() {
     fprintf(stdout, "  --pflash-min-score-budget N  skip draft when scoring_budget < N (default: 0=off)\n");
     fprintf(stdout, "  --pflash-coverage-zones N   divide middle context into N equal zones (default: 0=off)\n");
     fprintf(stdout, "  --pflash-min-blocks-per-file N  keep >=N blocks per // ===== FILE: segment (default: 0=off)\n");
+    fprintf(stdout, "  --pflash-score-method <m>  scoring method: centrality|obs-attn (default: centrality)\n");
+    fprintf(stdout, "  --pflash-obs-window N      observation window tokens for obs-attn scorer (default: 256)\n");
+    fprintf(stdout, "  --pflash-obs-pool N        SnapKV pooling kernel size (default: 5)\n");
+    fprintf(stdout, "  --pflash-adaptive-anchors  scale sink/recent as fraction of context\n");
+    fprintf(stdout, "  --pflash-debug-scores      dump score histogram and mid-zone range\n");
     fprintf(stdout, "  --draft-cache-k <type>  drafter K cache type (default: f16)\n");
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
@@ -280,6 +290,12 @@ static niah_result run_fixture(
         pparams.min_scoring_budget = params.pflash_min_scoring_budget;
         pparams.coverage_zones       = params.pflash_coverage_zones;
         pparams.min_blocks_per_file  = params.pflash_min_blocks_per_file;
+        pparams.score_method         = (params.pflash_score_method == "obs-attn")
+                                        ? PFLASH_SCORE_OBS_ATTN : PFLASH_SCORE_CENTRALITY;
+        pparams.obs_window_tokens    = params.pflash_obs_window;
+        pparams.obs_pool_kernel      = params.pflash_obs_pool;
+        pparams.adaptive_anchors     = params.pflash_adaptive_anchors;
+        pparams.debug_scores         = params.pflash_debug_scores;
 
         auto presult = pflash_compress(draft_ctx, tokens, pparams);
         res.pflash_bypassed = presult.bypassed;
@@ -545,6 +561,16 @@ int main(int argc, char **argv) {
             params.pflash_coverage_zones = std::stoi(args[++i]);
         } else if (arg == "--pflash-min-blocks-per-file" && i + 1 < args.size()) {
             params.pflash_min_blocks_per_file = std::stoi(args[++i]);
+        } else if (arg == "--pflash-score-method" && i + 1 < args.size()) {
+            params.pflash_score_method = args[++i];
+        } else if (arg == "--pflash-obs-window" && i + 1 < args.size()) {
+            params.pflash_obs_window = std::stoi(args[++i]);
+        } else if (arg == "--pflash-obs-pool" && i + 1 < args.size()) {
+            params.pflash_obs_pool = std::stoi(args[++i]);
+        } else if (arg == "--pflash-adaptive-anchors") {
+            params.pflash_adaptive_anchors = true;
+        } else if (arg == "--pflash-debug-scores") {
+            params.pflash_debug_scores = true;
         } else if (arg == "--draft-cache-k" && i + 1 < args.size()) {
             params.draft_cache_type_k = args[++i];
         } else if (arg == "--draft-cache-v" && i + 1 < args.size()) {

@@ -145,3 +145,162 @@ int32_t pflash_score_gpu(
 
     return n_blocks;
 }
+
+// ---------------------------------------------------------------------------
+// Observation-window attention kernels (SnapKV-style)
+// ---------------------------------------------------------------------------
+
+// Compute proxy_q = mean( K[n_tokens - W : n_tokens] )
+// Grid: 1D, block: (threads) across kv_dim
+static __global__ void pflash_proxy_q_kernel(
+    const float * __restrict__ K,
+    float       * __restrict__ proxy_q,
+    int n_tokens,
+    int kv_dim,
+    int W)
+{
+    int d = threadIdx.x + blockIdx.x * blockDim.x;
+    if (d >= kv_dim) return;
+
+    int obs_start = n_tokens - W;
+    if (obs_start < 0) obs_start = 0;
+    int n_obs = n_tokens - obs_start;
+
+    float sum = 0.0f;
+    for (int i = 0; i < n_obs; i++) {
+        sum += K[(size_t)(obs_start + i) * kv_dim + d];
+    }
+    proxy_q[d] = sum / (float)n_obs;
+}
+
+// Compute per-token attention scores: tok_scores[i] = dot(proxy_q, K[i])
+// Grid: n_tokens threads (1D), block: 256 threads
+static __global__ void pflash_attn_score_kernel(
+    const float * __restrict__ proxy_q,
+    const float * __restrict__ K,
+    float       * __restrict__ tok_scores,
+    int n_tokens,
+    int kv_dim)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_tokens) return;
+
+    const float * k = &K[(size_t)i * kv_dim];
+    float dot = 0.0f;
+    for (int d = 0; d < kv_dim; d++) {
+        dot += proxy_q[d] * k[d];
+    }
+    tok_scores[i] = dot;
+}
+
+// SnapKV pooling: 1D max-pool(kernel=K, stride=1), then block-wise max
+// Grid: n_blocks, block: 256 threads (each thread handles a subset of the block)
+static __global__ void pflash_pool_and_block_max_kernel(
+    const float * __restrict__ tok_scores,
+    float       * __restrict__ block_scores,
+    int n_tokens,
+    int block_size,
+    int pool_kernel)
+{
+    __shared__ float sdata[256];
+
+    int b = blockIdx.x;
+    int start = b * block_size;
+    int end = min(start + block_size, n_tokens);
+    int n = end - start;
+
+    float best = -1e30f;
+    for (int p = start + threadIdx.x; p < end; p += blockDim.x) {
+        int pool_start = p - pool_kernel / 2;
+        int pool_end   = p + pool_kernel / 2 + 1;
+        if (pool_start < 0) pool_start = 0;
+        if (pool_end > n_tokens) pool_end = n_tokens;
+
+        float local_max = -1e30f;
+        for (int w = pool_start; w < pool_end; w++) {
+            if (tok_scores[w] > local_max) local_max = tok_scores[w];
+        }
+        if (local_max > best) best = local_max;
+    }
+
+    sdata[threadIdx.x] = best;
+    __syncthreads();
+
+    for (int offset = blockDim.x / 2; offset > 0; offset /= 2) {
+        if (threadIdx.x < offset) {
+            if (sdata[threadIdx.x + offset] > sdata[threadIdx.x]) {
+                sdata[threadIdx.x] = sdata[threadIdx.x + offset];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        block_scores[b] = sdata[0];
+    }
+}
+
+int32_t pflash_score_gpu_obs_attn(
+    const float * d_k_data,
+    int32_t n_tokens,
+    int32_t kv_dim,
+    int32_t block_size,
+    int32_t obs_window,
+    int32_t pool_kernel,
+    float * scores_out)
+{
+    if (!d_k_data || n_tokens <= 0 || kv_dim <= 0 || block_size <= 0 || !scores_out) {
+        return 0;
+    }
+
+    int32_t n_blocks = (n_tokens + block_size - 1) / block_size;
+    hipError_t err;
+
+    float * d_proxy_q = nullptr;
+    float * d_tok_scores = nullptr;
+    float * d_block_scores = nullptr;
+
+    err = hipMalloc(&d_proxy_q, (size_t)kv_dim * sizeof(float));
+    if (err != hipSuccess) return 0;
+    err = hipMalloc(&d_tok_scores, (size_t)n_tokens * sizeof(float));
+    if (err != hipSuccess) { hipFree(d_proxy_q); return 0; }
+    err = hipMalloc(&d_block_scores, (size_t)n_blocks * sizeof(float));
+    if (err != hipSuccess) { hipFree(d_proxy_q); hipFree(d_tok_scores); return 0; }
+
+    // Step 1: Compute proxy_q = mean(K[tail window])
+    {
+        int n_threads = std::min(kv_dim, 256);
+        int n_blocks_pq = (kv_dim + n_threads - 1) / n_threads;
+        hipLaunchKernelGGL(pflash_proxy_q_kernel, dim3(n_blocks_pq), dim3(n_threads), 0, 0,
+            d_k_data, d_proxy_q, n_tokens, kv_dim, obs_window);
+    }
+
+    // Step 2: Per-token attention scores: dot(proxy_q, K[i])
+    {
+        int n_threads_attn = 256;
+        int n_blocks_attn = (n_tokens + n_threads_attn - 1) / n_threads_attn;
+        hipLaunchKernelGGL(pflash_attn_score_kernel, dim3(n_blocks_attn), dim3(n_threads_attn), 0, 0,
+            d_proxy_q, d_k_data, d_tok_scores, n_tokens, kv_dim);
+    }
+
+    // Step 3: SnapKV pooling + block-max
+    {
+        int n_threads_pool = 256;
+        hipLaunchKernelGGL(pflash_pool_and_block_max_kernel, dim3(n_blocks), dim3(n_threads_pool), 0, 0,
+            d_tok_scores, d_block_scores, n_tokens, block_size, pool_kernel);
+    }
+
+    err = hipMemcpy(scores_out, d_block_scores, (size_t)n_blocks * sizeof(float), hipMemcpyDeviceToHost);
+    if (err != hipSuccess) {
+        hipFree(d_proxy_q);
+        hipFree(d_tok_scores);
+        hipFree(d_block_scores);
+        return 0;
+    }
+
+    hipFree(d_proxy_q);
+    hipFree(d_tok_scores);
+    hipFree(d_block_scores);
+
+    return n_blocks;
+}

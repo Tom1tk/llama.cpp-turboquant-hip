@@ -780,3 +780,40 @@ The draft model (0.8B) attention proxy does not reliably transfer to the target 
 - Chunk 3: BSA mid obs-attn slow tier + centrality A/B (27 configs, ~10-20 min)
 - Chunk 4: BSA early obs-attn regression (22 questions, ~12-20 min)
 - Chunk 5: BSA late obs-attn + windowed mid sanity (44 configs, ~20-30 min)
+
+---
+
+## MTP Benchmark (2025-05-12)
+
+### Model
+- Target: `unsloth/Qwen3.6-27B-GGUF-MTP` (UD-Q4_K_XL, 17.9 GB, 866 tensors, 66 layers)
+- Architecture: `qwen35` → auto-override to `qwen35_mtp` (nextn_predict_layers=1)
+- GPU: RX 7900 XTX, 24 GB VRAM, ROCm 7.2.2
+
+### TG Speed (llama-server API, --no-chatml, 128 output tokens, temperature=0)
+
+| Prompt type | Baseline TG | MTP TG | Speedup | Draft accept |
+|-------------|------------|--------|---------|-------------|
+| Python quicksort | 28.1 tok/s | 52.0 tok/s | **1.85x** | 78.1% |
+| Robot painting story | 28.1 tok/s | 45.0 tok/s | **1.60x** | 62.9% |
+| C++ singleton | 27.9 tok/s | 47.7 tok/s | **1.71x** | 69.2% |
+| Transformer attention | 28.0 tok/s | 45.8 tok/s | **1.64x** | 65.1% |
+| **Average** | **28.0** | **47.6** | **1.70x** | **68.9%** |
+
+MTP PP speed is slightly lower (70-80 vs 79-90 tok/s) due to MTP head overhead on prefill.
+
+### Compatibility
+
+| Combination | Status |
+|-------------|--------|
+| MTP alone | Works (1.60-1.85x speedup) |
+| PFlash alone with MTP model | Works (A1 BSA mid PASS confirmed) |
+| MTP + PFlash combined | **CRASH**: `tensor read out of bounds` in `common_speculative_state_mtp::draft` |
+| NIAH baseline (5Q × 3 pos) | 15/15 PASS (100%) with MTP model |
+
+MTP+PFlash crash analysis:
+- PFlash compresses prompt → reduces KV cache token count
+- MTP draft head reads target model KV cache tensors
+- After PFlash compression, KV cache layout may not match MTP head expectations
+- Stack: `common_speculative_state_mtp::draft()` → `ggml_backend_tensor_get()` out-of-bounds
+- Likely needs PFlash to rebuild MTP head state after prompt compression

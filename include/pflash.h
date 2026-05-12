@@ -58,6 +58,15 @@ struct pflash_params {
     // Minimum scoring budget: skip draft pass when scoring_budget < this value
     // Prevents wasting a GPU draft pass when most kept tokens are anchors
     int32_t min_scoring_budget = 2048;
+
+    // Coverage zones: divide middle context into N equal zones and guarantee
+    // proportional block retention from each zone. 0 = disabled (greedy only).
+    // Recommended: 4 for typical 25k–100k token contexts.
+    int32_t coverage_zones = 0;
+
+    // File-aware retention: guarantee at least N blocks per source file boundary
+    // detected via '// ===== FILE:' markers. 0 = disabled.
+    int32_t min_blocks_per_file = 0;
 };
 
 struct pflash_span {
@@ -96,7 +105,10 @@ std::vector<pflash_span> pflash_select(
     int32_t sink_tokens,
     int32_t recent_tokens,
     float keep_ratio,
-    int32_t min_keep_tokens);
+    int32_t min_keep_tokens,
+    int32_t coverage_zones = 0,
+    const std::vector<std::pair<int32_t,int32_t>> & file_block_ranges = {},
+    int32_t min_blocks_per_file = 0);
 
 // Gather the selected tokens from the source tokens
 std::vector<llama_token> pflash_gather(

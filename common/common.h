@@ -381,6 +381,8 @@ struct common_params_speculative {
     int32_t pflash_bsa_auto_threshold = 50000; // auto-select BSA single-pass below N tokens (0=off)
     bool    pflash_keep_ratio_auto    = false; // adaptive keep ratio by context size
     int32_t pflash_min_scoring_budget = 0;     // skip draft when scoring_budget < N (0=off)
+    int32_t pflash_coverage_zones      = 0;     // divide middle context into N equal zones (0=off)
+    int32_t pflash_min_blocks_per_file = 0;     // keep >=N blocks per // ===== FILE: segment (0=off)
     int32_t pflash_bsa = 0;             // BSA mode: 0=off, 1=on, 2=auto with pflash_bsa_auto_threshold
 
     bool has_dft() const {

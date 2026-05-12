@@ -52,6 +52,8 @@ struct niah_params {
     int32_t pflash_bsa_auto_threshold = 0;
     bool pflash_keep_ratio_auto = false;
     int32_t pflash_min_scoring_budget = 0;
+    int32_t pflash_coverage_zones = 0;
+    int32_t pflash_min_blocks_per_file = 0;
 };
 
 struct niah_fixture {
@@ -120,6 +122,8 @@ static void print_usage() {
     fprintf(stdout, "  --pflash-bsa-auto N     auto-select BSA single-pass for n_tokens <= N (default: 0=off)\n");
     fprintf(stdout, "  --pflash-keep-auto      adaptive keep ratio by context size\n");
     fprintf(stdout, "  --pflash-min-score-budget N  skip draft when scoring_budget < N (default: 0=off)\n");
+    fprintf(stdout, "  --pflash-coverage-zones N   divide middle context into N equal zones (default: 0=off)\n");
+    fprintf(stdout, "  --pflash-min-blocks-per-file N  keep >=N blocks per // ===== FILE: segment (default: 0=off)\n");
     fprintf(stdout, "  --draft-cache-k <type>  drafter K cache type (default: f16)\n");
     fprintf(stdout, "  --draft-cache-v <type>  drafter V cache type (default: f16)\n");
 }
@@ -274,6 +278,8 @@ static niah_result run_fixture(
         pparams.bsa_auto_threshold = params.pflash_bsa_auto_threshold;
         pparams.keep_ratio_auto = params.pflash_keep_ratio_auto;
         pparams.min_scoring_budget = params.pflash_min_scoring_budget;
+        pparams.coverage_zones       = params.pflash_coverage_zones;
+        pparams.min_blocks_per_file  = params.pflash_min_blocks_per_file;
 
         auto presult = pflash_compress(draft_ctx, tokens, pparams);
         res.pflash_bypassed = presult.bypassed;
@@ -535,6 +541,10 @@ int main(int argc, char **argv) {
             params.pflash_keep_ratio_auto = true;
         } else if (arg == "--pflash-min-score-budget" && i + 1 < args.size()) {
             params.pflash_min_scoring_budget = std::stoi(args[++i]);
+        } else if (arg == "--pflash-coverage-zones" && i + 1 < args.size()) {
+            params.pflash_coverage_zones = std::stoi(args[++i]);
+        } else if (arg == "--pflash-min-blocks-per-file" && i + 1 < args.size()) {
+            params.pflash_min_blocks_per_file = std::stoi(args[++i]);
         } else if (arg == "--draft-cache-k" && i + 1 < args.size()) {
             params.draft_cache_type_k = args[++i];
         } else if (arg == "--draft-cache-v" && i + 1 < args.size()) {

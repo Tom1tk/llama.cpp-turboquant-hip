@@ -2430,6 +2430,8 @@ private:
                             pparams.bsa_auto_threshold = params_base.speculative.pflash_bsa_auto_threshold;
                             pparams.keep_ratio_auto    = params_base.speculative.pflash_keep_ratio_auto;
                             pparams.min_scoring_budget = params_base.speculative.pflash_min_scoring_budget;
+                            pparams.coverage_zones      = params_base.speculative.pflash_coverage_zones;
+                            pparams.min_blocks_per_file = params_base.speculative.pflash_min_blocks_per_file;
                             {
                                 int bsa_mode = params_base.speculative.pflash_bsa;
                                 pparams.use_bsa = (bsa_mode == 1) ||

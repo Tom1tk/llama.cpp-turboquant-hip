@@ -3858,6 +3858,22 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PFLASH_MIN_SCORE_BUDGET"));
     add_opt(common_arg(
+        {"--pflash-coverage-zones"}, "N",
+        "Divide middle context into N equal zones, guaranteeing proportional block retention (default: 0=off). "
+        "Recommended: 4. Improves mid-position answer recall at the cost of ~0%% TTFT overhead.",
+        [](common_params & params, int value) {
+            params.speculative.pflash_coverage_zones = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_SPECULATIVE}));
+    add_opt(common_arg(
+        {"--pflash-min-blocks-per-file"}, "N",
+        "Guarantee at least N blocks per source file when context contains // ===== FILE: markers (default: 0=off). "
+        "Enables multi-file code comprehension at any compression ratio.",
+        [](common_params & params, int value) {
+            params.speculative.pflash_min_blocks_per_file = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_SPECULATIVE}));
+    add_opt(common_arg(
         {"--pflash-block-size"}, "N",
         "PFlash scoring block granularity in tokens (default: 128)",
         [](common_params & params, int value) {

@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <unordered_map>
+#include <unordered_set>
 
 struct llama_context * pflash_init_draft(
     const std::string & model_path,
@@ -132,6 +134,23 @@ static bool pflash_process_window(
     return true;
 }
 
+static int32_t compute_incr(
+    int32_t b_start, int32_t b_end,
+    const std::vector<pflash_span> & anchors,
+    const std::vector<pflash_span> & selected)
+{
+    int32_t incr = b_end - b_start;
+    for (const auto & a : anchors) {
+        int32_t ov = std::min(b_end, a.end) - std::max(b_start, a.start);
+        if (ov > 0) incr -= ov;
+    }
+    for (const auto & s : selected) {
+        int32_t ov = std::min(b_end, s.end) - std::max(b_start, s.start);
+        if (ov > 0) incr -= ov;
+    }
+    return incr;
+}
+
 std::vector<pflash_span> pflash_select(
     const std::vector<float> & scores,
     int32_t block_size,
@@ -139,7 +158,10 @@ std::vector<pflash_span> pflash_select(
     int32_t sink_tokens,
     int32_t recent_tokens,
     float keep_ratio,
-    int32_t min_keep_tokens)
+    int32_t min_keep_tokens,
+    int32_t coverage_zones,
+    const std::vector<std::pair<int32_t,int32_t>> & file_block_ranges,
+    int32_t min_blocks_per_file)
 {
     std::vector<pflash_span> result;
 
@@ -229,6 +251,121 @@ std::vector<pflash_span> pflash_select(
     // Select blocks greedily
     int32_t middle_kept = 0;
     std::vector<pflash_span> selected;
+
+    // Build score lookup and forced set if any advanced mode is active
+    std::unordered_map<int32_t, float> score_map;
+    std::unordered_set<int32_t> forced_set;
+    if (coverage_zones > 0 || min_blocks_per_file > 0) {
+        score_map.reserve(ranked.size());
+        for (const auto & r : ranked) score_map[r.first] = r.second;
+    }
+
+    // --- Coverage zones: force-select blocks from each zone ---
+    if (coverage_zones > 0 && !ranked.empty()) {
+        std::vector<int32_t> middle_idx;
+        middle_idx.reserve(ranked.size());
+        for (const auto & r : ranked) middle_idx.push_back(r.first);
+        std::sort(middle_idx.begin(), middle_idx.end());
+
+        int32_t n_mid = (int32_t)middle_idx.size();
+        int32_t n_zones = std::min(coverage_zones, n_mid);
+        if (n_zones < 1) n_zones = 1;
+        int32_t zone_quota = (n_zones > 0) ? (middle_budget / n_zones) : 0;
+
+        if (zone_quota > 0) {
+            for (int32_t z = 0; z < n_zones; z++) {
+                int32_t zone_start = (int64_t)z       * n_mid / n_zones;
+                int32_t zone_end   = (int64_t)(z + 1) * n_mid / n_zones;
+                if (z == n_zones - 1) zone_end = n_mid;
+
+                std::vector<std::pair<float,int32_t>> zone_blocks;
+                for (int32_t i = zone_start; i < zone_end; i++) {
+                    int32_t b = middle_idx[i];
+                    if (forced_set.count(b) == 0) {
+                        zone_blocks.push_back({score_map[b], b});
+                    }
+                }
+                std::sort(zone_blocks.begin(), zone_blocks.end(),
+                    [](const auto & a, const auto & b) { return a.first > b.first; });
+
+                int32_t taken = 0;
+                for (const auto & zb : zone_blocks) {
+                    if (taken >= zone_quota || middle_kept >= middle_budget) break;
+                    int32_t bi = zb.second;
+                    int32_t b_start = (int32_t)((int64_t)bi * block_size);
+                    int32_t b_end   = std::min(b_start + block_size, n_tokens);
+                    int32_t incr = compute_incr(b_start, b_end, anchors, selected);
+                    if (incr > 0) {
+                        selected.push_back({b_start, b_end});
+                        middle_kept += incr;
+                        forced_set.insert(bi);
+                        taken++;
+                    }
+                }
+            }
+        }
+
+        // Ensure score_map is built (needed by greedy loop for zones, and by file-aware below)
+        if (score_map.empty()) {
+            score_map.reserve(ranked.size());
+            for (const auto & r : ranked) score_map[r.first] = r.second;
+        }
+
+        LOG_INF("pflash: coverage_zones=%d zone_quota=%d forced=%d/%d",
+                n_zones, zone_quota, (int)forced_set.size(), (int)ranked.size());
+    }
+
+    // --- File-aware retention: force-select blocks from each file segment ---
+    if (min_blocks_per_file > 0 && !file_block_ranges.empty()) {
+        // score_map already built above (or in zone pass)
+        if (score_map.empty()) {
+            score_map.reserve(ranked.size());
+            for (const auto & r : ranked) score_map[r.first] = r.second;
+        }
+
+        for (const auto & seg : file_block_ranges) {
+            int32_t seg_blk_start = seg.first;
+            int32_t seg_blk_end   = seg.second;
+
+            std::vector<std::pair<float,int32_t>> seg_blocks;
+            for (int32_t b = seg_blk_start; b < seg_blk_end && b < n_blocks; b++) {
+                int32_t b_start = (int32_t)((int64_t)b * block_size);
+                int32_t b_end   = std::min(b_start + block_size, n_tokens);
+                bool in_anchor = false;
+                for (const auto & a : anchors) {
+                    if (b_start >= a.start && b_end <= a.end) { in_anchor = true; break; }
+                }
+                if (in_anchor) continue;
+                if (forced_set.count(b)) continue;
+                seg_blocks.push_back({score_map.count(b) ? score_map[b] : scores[b], b});
+            }
+
+            if (seg_blocks.empty()) continue;
+
+            std::sort(seg_blocks.begin(), seg_blocks.end(),
+                [](const auto & a, const auto & b) { return a.first > b.first; });
+
+            int32_t taken = 0;
+            for (const auto & sb : seg_blocks) {
+                if (taken >= min_blocks_per_file) break;
+                int32_t bi = sb.second;
+                int32_t b_start = (int32_t)((int64_t)bi * block_size);
+                int32_t b_end   = std::min(b_start + block_size, n_tokens);
+                int32_t incr = compute_incr(b_start, b_end, anchors, selected);
+                if (incr > 0) {
+                    selected.push_back({b_start, b_end});
+                    middle_kept += incr;
+                    forced_set.insert(bi);
+                    taken++;
+                }
+            }
+        }
+
+        LOG_INF("pflash: file-aware: %d segs, middle_kept=%d/%d after file forcing",
+                (int)file_block_ranges.size(), middle_kept, middle_budget);
+    }
+
+    // --- Greedy fill: top-scored remaining blocks ---
     for (const auto & r : ranked) {
         if (middle_kept >= middle_budget) break;
 
@@ -236,22 +373,7 @@ std::vector<pflash_span> pflash_select(
         int32_t b_start = (int32_t)((int64_t)b * block_size);
         int32_t b_end = std::min(b_start + block_size, n_tokens);
 
-        // Compute incremental tokens (not covered by existing spans)
-        int32_t incr = b_end - b_start;
-        for (const auto & a : anchors) {
-            int32_t overlap_start = std::max(b_start, a.start);
-            int32_t overlap_end = std::min(b_end, a.end);
-            if (overlap_start < overlap_end) {
-                incr -= (overlap_end - overlap_start);
-            }
-        }
-        for (const auto & s : selected) {
-            int32_t overlap_start = std::max(b_start, s.start);
-            int32_t overlap_end = std::min(b_end, s.end);
-            if (overlap_start < overlap_end) {
-                incr -= (overlap_end - overlap_start);
-            }
-        }
+        int32_t incr = compute_incr(b_start, b_end, anchors, selected);
 
         if (incr > 0) {
             selected.push_back({b_start, b_end});
@@ -293,6 +415,61 @@ std::vector<llama_token> pflash_gather(
     }
 
     return result;
+}
+
+// Returns (start_block, end_block_exclusive) pairs for each file segment.
+// Detects file boundaries by searching for the token sequence encoding
+// "// ===== FILE:" in the prompt tokens.
+static std::vector<std::pair<int32_t,int32_t>> detect_file_block_ranges(
+    const std::vector<llama_token> & tokens,
+    const llama_vocab * vocab,
+    int32_t block_size)
+{
+    const std::string MARKER = "// ===== FILE:";
+    std::vector<llama_token> marker_toks(MARKER.size() + 4);
+    int n = llama_tokenize(vocab, MARKER.c_str(), (int32_t)MARKER.size(),
+                           marker_toks.data(), (int32_t)marker_toks.size(),
+                           /*add_special=*/false, /*parse_special=*/false);
+    if (n <= 0) {
+        LOG_WRN("pflash: file-boundary marker failed to tokenize (n=%d)", n);
+        return {};
+    }
+    marker_toks.resize(n);
+
+    // Find all occurrences of marker_toks in tokens.
+    std::vector<int32_t> boundary_positions;
+    int32_t ntok = (int32_t)tokens.size();
+    int32_t mlen = (int32_t)marker_toks.size();
+    for (int32_t i = 0; i <= ntok - mlen; i++) {
+        bool match = true;
+        for (int32_t j = 0; j < mlen; j++) {
+            if (tokens[i + j] != marker_toks[j]) { match = false; break; }
+        }
+        if (match) {
+            boundary_positions.push_back(i);
+            i += mlen - 1;
+        }
+    }
+
+    if (boundary_positions.empty()) {
+        return {};
+    }
+
+    std::vector<std::pair<int32_t,int32_t>> ranges;
+    ranges.reserve(boundary_positions.size());
+    for (int32_t i = 0; i < (int32_t)boundary_positions.size(); i++) {
+        int32_t tok_start = boundary_positions[i];
+        int32_t tok_end   = (i + 1 < (int32_t)boundary_positions.size())
+                            ? boundary_positions[i + 1]
+                            : ntok;
+        int32_t blk_start = tok_start / block_size;
+        int32_t blk_end   = (tok_end + block_size - 1) / block_size;
+        ranges.push_back({blk_start, blk_end});
+    }
+
+    LOG_INF("pflash: detected %d file segments via // ===== FILE: marker",
+            (int)ranges.size());
+    return ranges;
 }
 
 pflash_result pflash_compress(
@@ -508,12 +685,28 @@ pflash_result pflash_compress(
     }
     res.score_us = ggml_time_us() - t0;
 
+    // Detect file segment block ranges for file-aware retention
+    std::vector<std::pair<int32_t,int32_t>> file_block_ranges;
+    if (params.min_blocks_per_file > 0) {
+        const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(draft_ctx));
+        if (vocab) {
+            file_block_ranges = detect_file_block_ranges(tokens, vocab, params.block_size);
+            if (file_block_ranges.empty()) {
+                LOG_WRN("pflash: min_blocks_per_file=%d but no file markers found in context",
+                        params.min_blocks_per_file);
+            }
+        }
+    }
+
     // Step 6: Select spans
     t0 = ggml_time_us();
     auto spans = pflash_select(
         scores, params.block_size, n_tokens,
         params.sink_tokens, params.recent_tokens,
-        keep_ratio, params.min_keep_tokens);
+        keep_ratio, params.min_keep_tokens,
+        params.coverage_zones,
+        file_block_ranges,
+        params.min_blocks_per_file);
     res.select_us = ggml_time_us() - t0;
 
     // Step 7: Gather tokens

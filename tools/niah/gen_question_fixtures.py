@@ -60,8 +60,9 @@ def build_answer_block(answer_files, expected_substrings, question_text, answer_
         if w.lower() not in {'based','provided','source','which','there','these','their','about','every','location','nature','required','should','would','identify','specific','between','starting','during'}:
             if w not in q_keywords:
                 q_keywords.append(w)
-    # Question-specific keywords first (more selective), then expected substrings
-    all_keywords = q_keywords + list(expected_substrings)
+    # Expected substrings first (most selective—they ARE the answer),
+    # then question-specific keywords as fallback.
+    all_keywords = list(expected_substrings) + q_keywords
     parts = []
     remaining = answer_budget
     for relpath in answer_files:
